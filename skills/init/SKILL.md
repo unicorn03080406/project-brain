@@ -1,7 +1,7 @@
 ---
 name: init
 description: Set up the project brain for this workspace. NEW mode builds it from an intake (job post, proposal, contract, kickoff notes). ADOPT mode builds it from a workspace already in progress without changing any of its files. On a workspace that already has a brain, it offers to refresh it from new material or upgrade its structure.
-argument-hint: "[intake folder] [--yes]"
+argument-hint: "[intake folder] [--yes] [--mode private|shared]"
 disable-model-invocation: true
 allowed-tools: Bash(sh:*)
 ---
@@ -22,6 +22,7 @@ Arguments: `$ARGUMENTS`
 - `--yes` means unattended (used by tests): do not ask questions; take the recommended option
   at every step, write your assumptions into NOW.md under Open questions, and never touch
   `~/.claude/settings.json`.
+- `--mode private` or `--mode shared` answers the private-or-shared question in advance.
 
 ## What is here now
 

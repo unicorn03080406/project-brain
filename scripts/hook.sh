@@ -3,7 +3,7 @@
 # Events: session-start, session-end, prompt (UserPromptSubmit), stop.
 # Rules: with no .brain/ in the project, print nothing and exit 0. On any error, exit 0 and
 # print nothing: a hook must never block or clutter the session. Errors go to a log file.
-PB_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd)
+PB_ROOT=$(CDPATH= cd -- "$(dirname -- "$(printf '%s' "$0" | tr '\\' '/')")/.." 2>/dev/null && pwd)   # Windows passes C:\...; Git Bash wants C:/...
 . "$PB_ROOT/scripts/lib.sh" || exit 0
 EVENT=${1:-}
 PB_MAX_START=8000   # characters injected at session start (~2k tokens)

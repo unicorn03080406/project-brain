@@ -154,3 +154,35 @@ Use `~/pb-test/research` (or `~/pb-test/northwind`).
       claims released; status `handed-off` (it stays so after the chat closes).
 - [ ] The next new chat's start summary reflects the handoff (NOW.md, today's log).
 - [ ] Close a chat that holds a claim, without a handoff: the claim is released and logged.
+
+## M5. Test suites
+
+- [ ] `sh tests/run.sh`: every check passes (about 280), on macOS, Linux and Windows (Git Bash).
+      It prints the timings (start hook, prompt hook) and sizes (start injection, digest, auto tier).
+- [ ] `sh tests/e2e.sh` (optional, slow, uses your Claude account; needs `claude` on PATH or
+      `CLAUDE_BIN`): six scenarios in real Claude Code sessions: NEW research, NEW product (two
+      different structures), ADOPT shared, ADOPT private in a client git repo (byte-identical,
+      clean `git status`), capture + filing + a second session, split + retire by Claude.
+- [ ] CI (GitHub Actions): the tests workflow is green on ubuntu, macos and windows.
+
+## Windows (run once per release, on a Windows machine with Git for Windows)
+
+1. Install: Git for Windows, Claude Code (VS Code extension or CLI), then the plugin
+   (`/plugins` → Marketplaces → add this repo's path or GitHub name → Plugins → Install).
+2. In Git Bash, from a clone of this repo: `bash tests/run.sh`. Expect `failed: 0`.
+3. Make a test project:
+   `mkdir -p ~/pb-test/research && cp -R tests/fixtures/intake-research ~/pb-test/research/intake`
+4. Open `~/pb-test/research` in VS Code, new chat, `/project-brain:init`.
+   - [ ] It starts from the "What is here now" facts (the detect step ran under Git Bash).
+   - [ ] The brain is written to `.brain/` and the final report shows `map ok`.
+5. New chat in the same folder: "What do you know about this project? Don't read files."
+   - [ ] It answers from the start summary (the SessionStart hook ran).
+6. Paste the text of `tests/detector/context/teams-chat.txt` with "notes from the check-in".
+   - [ ] It says the notes were saved to `.brain/sources/inbox/…` and files them (the prompt hook ran).
+   - [ ] File names in `.brain/sources/` contain no `:` characters.
+7. Paste a screenshot, then attach a small PDF.
+   - [ ] Both end up in `.brain/sources/` (images from the images folder; the PDF after the reply).
+8. `/project-brain:handoff`.
+   - [ ] The session file says `handed-off`; claims released.
+If a step fails, send the file `%USERPROFILE%\.claude\plugins\data\project-brain*\project-brain-errors.log`
+(hooks write their errors there instead of into the chat).

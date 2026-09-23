@@ -2,7 +2,7 @@
 # project-brain command-line helper. Skills call it; you can too.
 # Usage: sh brain.sh <command> [args]. Run with no command for the list.
 set -u
-PB_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PB_ROOT=$(CDPATH= cd -- "$(dirname -- "$(printf '%s' "$0" | tr '\\' '/')")/.." && pwd)   # Windows passes C:\...; Git Bash wants C:/...
 . "$PB_ROOT/scripts/lib.sh"
 
 usage() {

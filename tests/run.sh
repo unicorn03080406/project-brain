@@ -185,7 +185,7 @@ t_skill() {
   s="$ROOT/skills/init/SKILL.md"
   check "SKILL.md has frontmatter with name and description" 'head -n 1 "$s" | grep -qx -- "---" && grep -q "^name: init\$" "$s" && grep -q "^description: " "$s"'
   check "init is user-invoked only" 'grep -q "^disable-model-invocation: true\$" "$s"'
-  check "every reference file named in the skill exists" 'for r in $(grep -o "reference/[a-z]*\.md" "$s" "$ROOT"/skills/init/reference/*.md | sed "s/.*reference/reference/" | sort -u); do [ -f "$ROOT/skills/init/$r" ] || exit 1; done'
+  check "every reference file named in the skill exists" '(for r in $(grep -o "reference/[a-z]*\.md" "$s" "$ROOT"/skills/init/reference/*.md | sed "s/.*reference/reference/" | sort -u); do [ -f "$ROOT/skills/init/$r" ] || exit 1; done)'
   check "plugin.json is valid-looking and versioned" 'grep -q "\"name\": \"project-brain\"" "$ROOT/.claude-plugin/plugin.json" && grep -q "\"version\": \"[0-9]*\.[0-9]*\.[0-9]*\"" "$ROOT/.claude-plugin/plugin.json"'
   check "no script has CRLF line endings" '! grep -rl "$(printf "\r")" "$ROOT/scripts" "$ROOT/tests/run.sh"'
 }
@@ -280,7 +280,7 @@ t_hookspeed() {
 t_hooksjson() {
   j="$ROOT/hooks/hooks.json"
   check "hooks.json exists and names both events" 'grep -q "\"SessionStart\"" "$j" && grep -q "\"SessionEnd\"" "$j"'
-  check "every hook command points at an existing script" 'for s in $(grep -o "scripts/[a-z.-]*\.sh" "$j" | sort -u); do [ -f "$ROOT/$s" ] || exit 1; done'
+  check "every hook command points at an existing script" '(for s in $(grep -o "scripts/[a-z.-]*\.sh" "$j" | sort -u); do [ -f "$ROOT/$s" ] || exit 1; done)'
   check "commands use CLAUDE_PLUGIN_ROOT and sh" '! grep "\"command\"" "$j" | grep -v "sh \\\\\"\${CLAUDE_PLUGIN_ROOT}/"'
   check "no probe hook left active" '! grep -q probe "$j"'
 }
@@ -614,17 +614,93 @@ t_skills() {
     check "$s: frontmatter with name and description" '[ "$(head -n 1 "$f")" = "---" ] && grep -q "^name: $s\$" "$f" && grep -q "^description: ." "$f"'
     check "$s: helper path points at brain.sh" 'grep -q "\${CLAUDE_SKILL_DIR}/../../scripts/brain.sh" "$f"'
   done
-  check "protocol is model-only; init, handoff, tidy, capture are user-only" 'grep -q "^user-invocable: false" "$ROOT/skills/protocol/SKILL.md" && for s in init handoff tidy capture; do grep -q "^disable-model-invocation: true" "$ROOT/skills/$s/SKILL.md" || exit 1; done'
-  check "every brain.sh command a skill uses exists" 'for c in $(grep -ho "B [a-z-]*" "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/init/reference/*.md | awk "{print \$2}" | sort -u); do case "$c" in in|is|and|or|below|to|log|a) continue;; esac; sh "$B" 2>&1 | grep -q "^  $c" || { echo "missing: $c" >&2; exit 1; }; done'
+  check "protocol is model-only; init, handoff, tidy, capture are user-only" '(grep -q "^user-invocable: false" "$ROOT/skills/protocol/SKILL.md" && for s in init handoff tidy capture; do grep -q "^disable-model-invocation: true" "$ROOT/skills/$s/SKILL.md" || exit 1; done)'
+  check "every brain.sh command a skill uses exists" '(for c in $(grep -ho "B [a-z-]*" "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/init/reference/*.md | awk "{print \$2}" | sort -u); do case "$c" in in|is|and|or|below|to|log|a) continue;; esac; sh "$B" 2>&1 | grep -q "^  $c" || { echo "missing: $c" >&2; exit 1; }; done)'
   needs_perm() { for f in "$ROOT"/skills/*/SKILL.md; do grep -q '^```!' "$f" || continue; sed -n '1,/^---$/p' "$f" | grep -q '^allowed-tools: Bash(sh:\*)' || { echo "$f" >&2; return 1; }; done; }
   check "skills that run a command up front declare Bash permission for it" needs_perm
-  check "dynamic context blocks call commands that exist" 'grep -h "brain.sh\" [a-z-]*" "$ROOT"/skills/*/SKILL.md | grep -o "brain.sh\" [a-z-]*" | awk "{print \$2}" | sort -u | while read -r c; do sh "$B" 2>&1 | grep -q "^  $c" || exit 1; done'
+  check "dynamic context blocks call commands that exist" '(grep -h "brain.sh\" [a-z-]*" "$ROOT"/skills/*/SKILL.md | grep -o "brain.sh\" [a-z-]*" | awk "{print \$2}" | sort -u | while read -r c; do sh "$B" 2>&1 | grep -q "^  $c" || exit 1; done)'
+}
+
+# --- M5: concurrency, split, sizes ----------------------------------------------------------------
+
+# Two sessions working at the same moment: logs, captures, claims and digests, 25 rounds each.
+t_concurrent() {
+  b scaffold . --name Busy --mode private >/dev/null
+  hk session-start aaaa1111 startup >/dev/null; hk session-start bbbb2222 startup >/dev/null
+  worker() {   # worker <session> <letter>
+    i=0
+    while [ $i -lt 25 ]; do
+      printf 'Call %s%s\n\n<pasted_content id="x">\nAnna Berg: round %s%s, we ship the importer on Friday if the tests pass tonight.\nBen Ode: agreed, and we freeze the branch on Thursday so there is time to review.\nAnna Berg: decision: freeze Thursday noon.\n</pasted_content>\n' \
+        "$2" $i "$2" $i > "p-$2-$i.txt"
+      hp "$1" "p-$2-$i.txt" > "out-$2-$i.txt"
+      printf '%s%s line one\n%s%s line two\n' "$2" $i "$2" $i | b log --type status --session "$1" >/dev/null
+      b claim "item-$2-$i.md" --hours 1 --session "$1" >/dev/null
+      i=$((i + 1))
+    done
+  }
+  worker aaaa1111 A & worker bbbb2222 B & wait
+  f=.brain/log/$(date +%Y-%m-%d).md
+  check "all 100 log entries are there (50 status, 50 capture)" '[ "$(grep -c "· status\$" "$f")" = 50 ] && [ "$(grep -c "· capture · inbox\$" "$f")" = 50 ]'
+  check "no log entry is interleaved with another" '[ "$(awk "/^### .*s:aaaa1111/{w=\"A\"} /^### .*s:bbbb2222/{w=\"B\"} /line (one|two)\$/ && substr(\$1,1,1)!=w {n++} END{print n+0}" "$f")" = 0 ]'
+  check "all 50 pasted calls were saved" '[ "$(ls .brain/sources/inbox/*.md | wc -l | tr -d " ")" = 50 ]'
+  check "every saved call is complete" '(for g in .brain/sources/inbox/*.md; do grep -q "decision: freeze Thursday noon" "$g" || exit 1; done)'
+  check "all 50 claims are in NOW.md" '[ "$(grep -c "^- \[claim\] item-" .brain/NOW.md)" = 50 ]'
+  check "NOW.md kept all its sections" '(for s in Status Focus Items Claims Blockers "Open questions" Checkpoints Freshness; do grep -q "^## $s" .brain/NOW.md || exit 1; done)'
+  check "each session saw the other in its digests" 'cat out-A-*.txt | grep -q "s:bbbb2222" && cat out-B-*.txt | grep -q "s:aaaa1111"'
+  check "no session saw its own entries in a digest" '! cat out-A-*.txt | grep -q "s:aaaa1111 status" && ! cat out-B-*.txt | grep -q "s:bbbb2222 status"'
+  check "no lock left behind" '[ -z "$(ls .brain/.locks 2>/dev/null)" ]'
+  check "map-check passes" 'b claude-block >/dev/null && b map-check'
+}
+
+# A split done with the helper commands, the way the protocol skill describes it.
+t_split() {
+  b scaffold . --name Split --mode shared >/dev/null
+  b add "charter.md|auto|file|why and scope|always" >/dev/null
+  b add "decisions.md|demand|file|all decisions|before changing direction" >/dev/null
+  echo "source" > .brain/sources/x.md
+  { echo "# Decisions"; echo; for y in 2025 2026; do m=1; while [ $m -le 9 ]; do echo "- $y-0$m-01 · decision $y-$m · Ana · why · sources/x.md · [meeting]"; m=$((m + 1)); done; done; } > .brain/decisions.md
+  echo "Past decisions: see decisions.md and .brain/decisions.md." >> .brain/charter.md
+  b claude-block >/dev/null
+  before=$(grep -c "^- 20" .brain/decisions.md)
+  b claim "split decisions.md" --session aaaa1111 >/dev/null
+  b add "decisions-2025.md|demand|file|decisions made in 2025|looking up an old decision" >/dev/null
+  { echo "# Decisions 2025"; echo; grep "^- 2025" .brain/decisions.md; } > .brain/decisions-2025.md
+  grep -v "^- 2025" .brain/decisions.md > d.tmp && mv d.tmp .brain/decisions.md
+  echo "split decisions.md: 2025 entries → decisions-2025.md, because the file mixed two years" | b log --type structure --session aaaa1111 >/dev/null
+  b release --all --session aaaa1111 >/dev/null
+  check "no decision lost in the split" '[ $(( $(grep -c "^- 20" .brain/decisions.md) + $(grep -c "^- 20" .brain/decisions-2025.md) )) = "$before" ]'
+  check "map-check and refs-check pass after the split" 'b map-check && [ -z "$(b refs-check)" ]'
+  check "the split is logged as a structure change" 'grep -q "split decisions.md: 2025 entries → decisions-2025.md" .brain/log/$(date +%Y-%m-%d).md'
+  b claim "retire decisions-2025.md" --session aaaa1111 >/dev/null
+  b retire decisions-2025.md --session aaaa1111 --why "2025 is closed" >/dev/null
+  check "retire after the split keeps map and references right" 'b map-check && [ -z "$(b refs-check)" ] && [ -f .brain/archive/decisions-2025.md ]'
+}
+
+# Sizes the owner cares about: the start injection and the per-prompt digest.
+t_sizes() {
+  sh "$ROOT/tests/fixtures/make-adopt-ws.sh" ws >/dev/null; cd ws
+  b scaffold . --name Northwind --mode private --adopt >/dev/null
+  b add "charter.md|auto|file|why and scope|always" >/dev/null
+  b add "glossary.md|auto|file|terms|always" >/dev/null
+  i=0; while [ $i -lt 30 ]; do echo "- item $i · Dana · due 2026-10-15 · open · [meeting] (notes/todo.txt)"; i=$((i + 1)); done > items
+  awk -v f=items '/^## Items/ { print; while ((getline l < f) > 0) print l; next } { print }' .brain/NOW.md > n && mv n .brain/NOW.md
+  b claude-block >/dev/null
+  hk session-start aaaa1111 startup >/dev/null
+  i=0; while [ $i -lt 20 ]; do echo "entry $i with some words to make it realistic" | b log --type status --session bbbb2222 >/dev/null; i=$((i + 1)); done
+  s=$(hk session-start cccc3333 startup | wc -c | tr -d ' ')
+  echo q > q.txt; d=$(hp aaaa1111 q.txt | wc -c | tr -d ' ')
+  a=$(b budget | tail -n 1 | awk '{ print $1 }')
+  echo "        start injection: $s chars (~$((s / 4)) tokens); digest after 20 entries: $d chars; auto tier: ~$a tokens"
+  check "start injection within ~2k tokens" '[ "$s" -le 8000 ]'
+  check "per-prompt digest stays a few lines (under 1,500 chars)" '[ "$d" -le 1500 ]'
+  check "auto tier within ~3k tokens" '[ "$a" -le 3000 ]'
 }
 
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
          hookquiet hookstart hookbudget hookdrift hookspeed hooksjson \
          detector redact capture digest images attach phantom promptspeed \
-         claims move retire retier refs capturecmd catchup tidy upgrade sessionstatus skills; do run "$t"; done
+         claims move retire retier refs capturecmd catchup tidy upgrade sessionstatus skills \
+         concurrent split sizes; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo
