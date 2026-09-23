@@ -27,6 +27,22 @@ project-brain helper. Commands:
   transcripts [dir] [N]        list past sessions for this folder (only with the owner's permission)
   transcript <id|file> [--all] [--max N]
                                 print one session's prompts (and replies with --all), shortened
+Claims and structure (split, merge, move and retire need a claim; the fixed core is off limits):
+  claim "<what>" [--hours N]    claim work or a structure change (default 4 h); refused if it overlaps
+  release "<what>" | --all      release this session's claims
+  claims [--expire]             list claims; --expire clears expired ones
+  move <old> <new> --why "..."  rename a brain file or folder; MAP.md, CLAUDE block, references follow
+  retire <path> --why "..."     move to archive/ (or drop a link row); MAP.md and references follow
+  retier <path> <tier>          change a file's load tier; CLAUDE block and budget follow
+  refs-check                    paths mentioned in brain files that no longer exist
+Work:
+  capture [file] [--kind K]     save a file (or text on stdin) to sources/inbox/, redacted, not twice
+  catchup [--since DATE]        everything other sessions did since this session started
+  tidy-report                   sizes, budget, stale, empty, overlaps, inbox, claims, links, privacy
+  upgrade [--dry-run]           bring the brain to the plugin's format, step by step
+  session-status <state>        mark this session live, handed-off or ended
+Most commands take --session <id> (or use $BRAIN_SESSION, set by the start hook).
+Other:
   slug [dir]                    Claude Code's folder name for this workspace under ~/.claude/projects
   find                          print the brain folder, or exit 1
   version                       plugin version and brain format
@@ -423,6 +439,429 @@ cmd_privacy_check() {
   return 0
 }
 
+# --- Sessions and claims ------------------------------------------------------------------------
+# A claim is one line in NOW.md "## Claims" and in the session's own file:
+#   - [claim] <what> · s:<id> · since <date time> · until <date time> (@<epoch>)
+# Claims expire at "until". Anyone may clear expired claims. Additive changes need no claim;
+# split, merge, rename (move) and retire do.
+
+my_session() { S8=$(printf '%s' "${opt_session:-${BRAIN_SESSION:-}}" | cut -c1-8); [ -n "$S8" ] || pb_die "no session id: pass --session <id> (your id is in the start summary)"; }
+
+fmt_epoch() {   # epoch -> "YYYY-MM-DD HH:MM" local time, on BSD, GNU and Git Bash date
+  date -r "$1" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$1" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "@$1"
+}
+
+claim_lines() { awk '/^## Claims/ { c = 1; next } /^## / { c = 0 } c && /^- \[claim\] /' "$BRAIN/NOW.md"; }
+
+claim_epoch() { printf '%s\n' "$1" | sed -n 's/.*(@\([0-9]*\))[[:space:]]*$/\1/p'; }
+claim_owner() { printf '%s\n' "$1" | sed -n 's/.* · s:\([^ ]*\) · since .*/\1/p'; }
+claim_what()  { printf '%s\n' "$1" | sed -n 's/^- \[claim\] \(.*\) · s:[^ ]* · since .*/\1/p'; }
+
+# Path-like words in a claim ("split decisions.md" -> decisions.md). Two claims conflict when
+# they are equal, share such a word, or either is the whole-brain claim "structure".
+claim_tokens() {
+  mapped=$(pb_map_rows "$MAP" 2>/dev/null | awk -F'|' '{ p = $1; sub(/\/$/, "", p); print p }')
+  printf '%s\n' "$1" | tr ' ,;()' '\n\n\n\n\n' | sed -e 's|^\.brain/||' -e 's|/$||' | while IFS= read -r w; do
+    [ -n "$w" ] || continue
+    case "$w" in */*|*.[a-z]*) echo "$w" ;; *) printf '%s\n' "$mapped" | grep -qxF "$w" && echo "$w" ;; esac
+  done | sort -u
+}
+claims_conflict() {
+  [ "$1" = "$2" ] && return 0
+  case "$1" in structure) return 0 ;; esac
+  case "$2" in structure) return 0 ;; esac
+  a=$(claim_tokens "$1"); b=$(claim_tokens "$2")
+  [ -n "$a" ] && [ -n "$b" ] && [ -n "$(printf '%s\n%s\n' "$a" "$b" | sort | uniq -d)" ]
+}
+
+# Rewrite the "## Claims" section of a file (NOW.md or a session file) with an awk filter.
+edit_claims() {   # edit_claims <file> <awk program on claim lines; print what to keep> [line to add]
+  f=$1; prog=$2; add=${3:-}
+  [ -f "$f" ] || return 0
+  awk -v add="$add" '
+    function flush() { if (inc && add != "" && !added) { print add; added = 1 } }
+    /^## Claims/ { print; inc = 1; next }
+    inc && /^## / { flush(); inc = 0 }
+    inc && /^- \[claim\] / { if ('"$prog"') print; next }
+    { print }
+    END { flush() }' "$f" | pb_replace "$f"
+}
+
+expire_claims() {   # drop expired claims from NOW.md; print what was dropped
+  now=$(pb_epoch)
+  claim_lines | while IFS= read -r l; do
+    e=$(claim_epoch "$l"); [ -n "$e" ] && [ "$e" -lt "$now" ] && echo "expired: $l"
+  done
+  edit_claims "$BRAIN/NOW.md" 'match($0, /\(@[0-9]+\)[[:space:]]*$/) == 0 || substr($0, RSTART + 2, RLENGTH - 3) + 0 >= '"$now"
+}
+
+cmd_claim() {
+  need_brain; hours=4; what=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --hours) hours=$2; shift 2 ;; --session) opt_session=$2; shift 2 ;; *) what="$what${what:+ }$1"; shift ;; esac
+  done
+  my_session
+  [ -n "$what" ] || pb_die 'usage: claim "<what>" [--hours N] [--session ID]'
+  what=$(printf '%s' "$what" | tr -d '·\n' | sed 's/(@/(/g')
+  pb_lock "$BRAIN" now || pb_die "NOW.md is locked, try again"
+  expire_claims >/dev/null
+  conflict=$(claim_lines | while IFS= read -r l; do
+    o=$(claim_owner "$l"); [ "$o" = "$S8" ] && continue
+    claims_conflict "$what" "$(claim_what "$l")" && { echo "$l"; break; }
+  done)
+  if [ -n "$conflict" ]; then pb_unlock "$BRAIN" now; echo "REFUSED: another session holds a claim that overlaps:"; echo "$conflict"; return 3; fi
+  now=$(pb_epoch); until=$((now + hours * 3600))
+  line="- [claim] $what · s:$S8 · since $(fmt_epoch "$now") · until $(fmt_epoch "$until") (@$until)"
+  edit_claims "$BRAIN/NOW.md" "1" "$line"
+  pb_unlock "$BRAIN" now
+  sf="$BRAIN/sessions/$S8.md"
+  [ -f "$sf" ] || sed -e "s|{{SID}}|$S8|g" -e "s|{{TS}}|$(pb_now)|g" "$PB_ROOT/templates/core/session.md" > "$sf"
+  edit_claims "$BRAIN/sessions/$S8.md" "1" "$line"
+  echo "claimed: $what (until $(fmt_epoch "$until"))"
+}
+
+cmd_release() {
+  need_brain; what=""; all=0
+  while [ $# -gt 0 ]; do
+    case "$1" in --all) all=1; shift ;; --session) opt_session=$2; shift 2 ;; *) what="$what${what:+ }$1"; shift ;; esac
+  done
+  my_session
+  [ $all = 1 ] || [ -n "$what" ] || pb_die 'usage: release "<what>" | --all [--session ID]'
+  if [ $all = 1 ]; then keep='index($0, " · s:'"$S8"' · since ") == 0'
+  else keep='!(index($0, " · s:'"$S8"' · since ") > 0 && index($0, "- [claim] '"$(printf '%s' "$what" | sed 's/[\\"]/\\&/g')"' · ") == 1)'; fi
+  pb_lock "$BRAIN" now || pb_die "NOW.md is locked, try again"
+  before=$(claim_lines | grep -c . || true)
+  edit_claims "$BRAIN/NOW.md" "$keep"
+  after=$(claim_lines | grep -c . || true)
+  pb_unlock "$BRAIN" now
+  edit_claims "$BRAIN/sessions/$S8.md" "$keep"
+  echo "released: $((before - after)) claim(s)"
+}
+
+cmd_claims() {
+  need_brain
+  if [ "${1:-}" = --expire ]; then
+    pb_lock "$BRAIN" now || pb_die "NOW.md is locked, try again"; expire_claims; pb_unlock "$BRAIN" now; return 0
+  fi
+  now=$(pb_epoch)
+  claim_lines | while IFS= read -r l; do
+    e=$(claim_epoch "$l"); if [ -n "$e" ] && [ "$e" -lt "$now" ]; then echo "EXPIRED $l"; else echo "active  $l"; fi
+  done
+}
+
+require_claim() {   # require_claim <path>: this session must hold a claim covering the path
+  my_session
+  p=${1#.brain/}; p=${p%/}
+  held=$(claim_lines | while IFS= read -r l; do
+    [ "$(claim_owner "$l")" = "$S8" ] || continue
+    w=$(claim_what "$l")
+    { [ "$w" = structure ] || claim_tokens "$w" | grep -qxF "$p"; } && { echo yes; break; }
+  done)
+  [ "$held" = yes ] || pb_die "claim it first: brain.sh claim \"<change> $p\" --session $S8 (split, merge, move and retire need a claim)"
+}
+
+# --- References ---------------------------------------------------------------------------------
+# Living files: everything in the brain except sources/ (verbatim), log/ (append-only history),
+# archive/ (retired) and sessions/ (each owned by its session).
+living_files() {
+  (cd "$BRAIN" && find . -type f -name '*.md' ! -path './sources/*' ! -path './log/*' ! -path './archive/*' \
+     ! -path './sessions/*' ! -path './.locks/*' | sed 's|^\./||' | LC_ALL=C sort)
+}
+
+# Replace a path wherever it appears as a whole path (optionally written as .brain/<path>).
+rewrite_refs() {   # rewrite_refs <old> <new>; prints the files it changed
+  old=$1; new=$2
+  living_files | while IFS= read -r f; do
+    grep -qF "$old" "$BRAIN/$f" || continue
+    LC_ALL=C awk -v old="$old" -v new="$new" '
+      function ok_before(s, i, c) { if (i == 1) return 1; c = substr(s, i - 1, 1)
+        if (c !~ /[A-Za-z0-9_.\/-]/) return 1
+        return (i > 7 && substr(s, i - 7, 7) == ".brain/") }
+      function ok_after(s, j, c) { if (j > length(s)) return 1; c = substr(s, j, 1)
+        if (old ~ /\/$/) return 1
+        return (c !~ /[A-Za-z0-9_\/-]/) && !(c == "." && substr(s, j + 1, 1) ~ /[A-Za-z0-9]/) }
+      /^- \[claim\] / { print; next }
+      { out = ""; s = $0
+        while ((i = index(s, old)) > 0) {
+          if (ok_before(s, i) && ok_after(s, i + length(old))) { out = out substr(s, 1, i - 1) new; hit = 1 }
+          else out = out substr(s, 1, i - 1 + length(old))
+          s = substr(s, i + length(old)) }
+        print out s }
+      END { exit !hit }' "$BRAIN/$f" > "$BRAIN/$f.pb-tmp.$$" && { mv -f "$BRAIN/$f.pb-tmp.$$" "$BRAIN/$f"; echo "$f"; } \
+      || rm -f "$BRAIN/$f.pb-tmp.$$"
+  done
+}
+
+# Paths mentioned in living files that point into the brain but do not exist.
+cmd_refs_check() {
+  need_brain
+  tops=$(pb_map_rows "$MAP" | awk -F'|' '$3 != "ext" { p = $1; sub(/\/.*/, "", p); print p }' | sort -u)
+  living_files | while IFS= read -r f; do
+    LC_ALL=C awk '{ s = $0
+        while (match(s, /[A-Za-z0-9_.\/-]+\.(md|pdf|png|jpe?g|txt|csv|eml|json|docx?)|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.\/-]*/)) {
+          print substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) } }' "$BRAIN/$f" |
+    sed -e 's/[.,:;]*$//' | sort -u | while IFS= read -r ref; do
+      r=${ref#.brain/}; top=${r%%/*}
+      [ "$ref" != "$r" ] || printf '%s\n' "$tops" | grep -qxF "$top" || continue
+      [ -e "$BRAIN/$r" ] || [ -e "$PROJ/$r" ] || [ -e "$PROJ/$ref" ] || echo "BROKEN: $f mentions $ref"
+    done
+  done
+}
+
+# --- Structure changes ---------------------------------------------------------------------------
+
+map_row_of() { pb_map_rows "$MAP" | awk -F'|' -v p="$1" '$1 == p || $1 == p "/"'; }
+
+map_edit_row() {   # map_edit_row <path> <new path or "-" to delete> [new tier]
+  pb_lock "$BRAIN" map || pb_die "MAP.md is locked by another session"
+  awk -v p="$1" -v np="$2" -v nt="${3:-}" '
+    /^```brain-map[[:space:]]*$/ { inb = 1; print; next }
+    inb && /^```/ { inb = 0 }
+    inb && /\|/ && $0 !~ /^[[:space:]]*#/ {
+      split($0, c, "|"); k = c[1]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+      if (k == p || k == p "/") {
+        if (np == "-") next
+        rest = substr($0, index($0, "|"))
+        if (nt != "") { n = split(rest, r, "|"); r[2] = " " sprintf("%-6s", nt) " "; rest = ""; for (i = 1; i <= n; i++) rest = rest (i > 1 ? "|" : "") r[i] }
+        printf "%-19s %s\n", (np == "" ? k : np), rest; next
+      }
+    }
+    { print }' "$MAP" | pb_replace "$MAP"
+  pb_unlock "$BRAIN" map
+}
+
+struct_log() { printf '%s\n' "$1" | cmd_log --type structure --session "$S8" >/dev/null; }
+
+cmd_move() {
+  need_brain; old=""; new=""; why=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --why) why=$2; shift 2 ;; --session) opt_session=$2; shift 2 ;; *) [ -z "$old" ] && old=$1 || new=$1; shift ;; esac
+  done
+  [ -n "$old" ] && [ -n "$new" ] || pb_die 'usage: move <old> <new> --why "<reason>" [--session ID]'
+  old=${old#.brain/}; new=${new#.brain/}
+  row=$(map_row_of "${old%/}")
+  [ -n "$row" ] || pb_die "not in MAP.md: $old"
+  case "$(printf '%s' "$row" | cut -d'|' -f3)" in core) pb_die "the fixed core is off limits: $old" ;; ext) pb_die "$old is a workspace file; the brain never moves those" ;; esac
+  [ -e "$BRAIN/$old" ] || pb_die "missing: $old"
+  [ -e "$BRAIN/$new" ] && pb_die "already exists: $new"
+  require_claim "$old"
+  case "$new" in */*) mkdir -p "$BRAIN/$(dirname -- "$new")" ;; esac
+  mv "$BRAIN/${old%/}" "$BRAIN/${new%/}" || exit 1
+  kindd=$(printf '%s' "$row" | cut -d'|' -f3)
+  [ "$kindd" = dir ] && { old="${old%/}/"; new="${new%/}/"; }
+  map_edit_row "${old%/}" "$new"
+  changed=$(rewrite_refs "$old" "$new" | awk '{ printf "%s%s", s, $0; s = ", " }')
+  [ "$(printf '%s' "$row" | cut -d'|' -f2)" = auto ] && cmd_claude_block >/dev/null
+  struct_log "move: $old → $new. Why: ${why:-not given}. References updated in: ${changed:-none}."
+  echo "moved: $old → $new"; [ -n "$changed" ] && echo "references updated in: $changed"
+  return 0
+}
+
+cmd_retire() {
+  need_brain; p=""; why=""; refsto=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --why) why=$2; shift 2 ;; --refs-to) refsto=${2#.brain/}; shift 2 ;; --session) opt_session=$2; shift 2 ;; *) p=$1; shift ;; esac
+  done
+  [ -n "$p" ] || pb_die 'usage: retire <path> --why "<reason>" [--refs-to <merged-into path>] [--session ID]'
+  p=${p#.brain/}
+  row=$(map_row_of "${p%/}")
+  [ -n "$row" ] || pb_die "not in MAP.md: $p"
+  kind=$(printf '%s' "$row" | cut -d'|' -f3); tier=$(printf '%s' "$row" | cut -d'|' -f2)
+  [ "$kind" = core ] && pb_die "the fixed core is off limits: $p"
+  require_claim "$p"
+  if [ "$kind" = ext ]; then       # a link: drop the row, never touch the workspace file
+    map_edit_row "${p%/}" "-"
+    [ "$tier" = auto ] && cmd_claude_block >/dev/null
+    struct_log "retire link: ${p#@ext:} (row removed from MAP.md; the workspace file is untouched). Why: ${why:-not given}."
+    echo "unlinked: $p"; return 0
+  fi
+  [ -e "$BRAIN/${p%/}" ] || pb_die "missing: $p"
+  dest="archive/${p%/}"
+  [ -e "$BRAIN/$dest" ] && dest="archive/$(pb_today)-$(printf '%s' "${p%/}" | tr '/' '-')"
+  mkdir -p "$BRAIN/$(dirname -- "$dest")"
+  mv "$BRAIN/${p%/}" "$BRAIN/$dest" || exit 1
+  [ "$kind" = dir ] && { p="${p%/}/"; dest="$dest/"; }
+  map_edit_row "${p%/}" "-"
+  changed=$(rewrite_refs "$p" "${refsto:-$dest}" | awk '{ printf "%s%s", s, $0; s = ", " }')
+  [ "$tier" = auto ] && cmd_claude_block >/dev/null
+  struct_log "retire: $p → $dest${refsto:+ (merged into $refsto)}. Why: ${why:-not given}. References updated in: ${changed:-none}."
+  echo "retired: $p → $dest"; [ -n "$changed" ] && echo "references updated in: $changed"
+  return 0
+}
+
+cmd_retier() {
+  need_brain; p=""; t=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --session) opt_session=$2; shift 2 ;; *) [ -z "$p" ] && p=$1 || t=$1; shift ;; esac
+  done
+  case "$t" in auto|inject|demand) ;; *) pb_die 'usage: retier <path> auto|inject|demand [--session ID]' ;; esac
+  p=${p#.brain/}
+  row=$(map_row_of "${p%/}"); [ -n "$row" ] || pb_die "not in MAP.md: $p"
+  [ "$(printf '%s' "$row" | cut -d'|' -f3)" = core ] && pb_die "the fixed core is off limits: $p"
+  old=$(printf '%s' "$row" | cut -d'|' -f2)
+  map_edit_row "${p%/}" "" "$t"
+  cmd_claude_block >/dev/null
+  S8=$(printf '%s' "${opt_session:-${BRAIN_SESSION:-manual}}" | cut -c1-8)
+  struct_log "retier: $p $old → $t."
+  echo "retiered: $p $old → $t"
+  cmd_budget | tail -n 1
+}
+
+# --- Manual capture ------------------------------------------------------------------------------
+
+cmd_capture() {
+  need_brain; src=""; kind=manual
+  while [ $# -gt 0 ]; do
+    case "$1" in --kind) kind=$2; shift 2 ;; --session) opt_session=$2; shift 2 ;; *) src=$1; shift ;; esac
+  done
+  S8=$(printf '%s' "${opt_session:-${BRAIN_SESSION:-manual}}" | cut -c1-8)
+  d="$BRAIN/sources/inbox"; mkdir -p "$d"
+  w=$(mktemp -d 2>/dev/null) || { w="${TMPDIR:-/tmp}/pbc.$$"; mkdir -p "$w"; }
+  if [ -n "$src" ]; then
+    src=$(pb_path "$src"); [ -f "$src" ] || pb_die "no such file: $src"
+    base=$(basename -- "$src" | sed 's/[^A-Za-z0-9._-]/-/g')
+    f="$d/$(pb_stamp)-$S8-$base"; k=1
+    while [ -e "$f" ]; do k=$((k + 1)); f="$d/$(pb_stamp)-$S8-$k-$base"; done
+    case "$base" in
+      *.md|*.txt|*.eml|*.csv|*.vtt|*.srt|*.json|*.html|*.htm|*.yaml|*.yml)
+        sh "$PB_ROOT/scripts/redact.sh" "$w/r" < "$src" > "$f" ;;
+      *) cp "$src" "$f" ;;
+    esac
+  else
+    cat > "$w/in"; [ -s "$w/in" ] || pb_die "nothing to capture (give a file, or text on stdin)"
+    f="$d/$(pb_stamp)-$S8.md"; k=1
+    while [ -e "$f" ]; do k=$((k + 1)); f="$d/$(pb_stamp)-$S8-$k.md"; done
+    sh "$PB_ROOT/scripts/redact.sh" "$w/r" < "$w/in" > "$w/body"
+    { echo "---"; echo "captured: $(pb_now)"; echo "session: $S8"; echo "detected: $kind"
+      echo "redacted: $(awk '{ printf "%s%s x%s", s, $1, $2; s = ", " }' "$w/r")"; echo "---"; cat "$w/body"; } > "$f"
+  fi
+  red=$(awk '{ printf "%s%s x%s", s, $1, $2; s = ", " }' "$w/r" 2>/dev/null); rm -rf "$w"
+  # never store the same bytes twice
+  s=$(wc -c < "$f" | tr -d ' ')
+  o=$(find "$BRAIN/sources" -type f -size "${s}c" ! -path "$f" 2>/dev/null | while IFS= read -r x; do cmp -s "$f" "$x" && { echo "${x#"$BRAIN"/}"; break; }; done)
+  if [ -n "$o" ]; then rm -f "$f"; echo "already in the brain: .brain/$o"; return 0; fi
+  rel=${f#"$BRAIN"/}
+  printf 'Saved %s (%s%s). Filing: s:%s.\n' "$rel" "$kind" "${red:+; redacted: $red}" "$S8" | cmd_log --type capture --tag inbox --session "$S8" >/dev/null
+  echo "saved: .brain/$rel${red:+ (credentials removed: $red)}"
+}
+
+# --- Catch-up and tidy reports -------------------------------------------------------------------
+
+cmd_catchup() {
+  need_brain; since=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --since) since=$2; shift 2 ;; --session) opt_session=$2; shift 2 ;; *) shift ;; esac
+  done
+  S8=$(printf '%s' "${opt_session:-${BRAIN_SESSION:-}}" | cut -c1-8)
+  sf="$BRAIN/sessions/$S8.md"
+  [ -n "$since" ] || since=$(sed -n 's/^started: \([0-9-]*\).*/\1/p' "$sf" 2>/dev/null | head -n 1)
+  [ -n "$since" ] || since=$(pb_today)
+  echo "# Catch-up for s:${S8:-?} since $since"
+  echo; echo "## Log entries by other sessions (oldest first)"
+  for l in "$BRAIN"/log/*.md; do
+    [ -f "$l" ] || continue
+    d=$(basename -- "$l" .md); [ "$d" \< "$since" ] && continue
+    awk -v me="s:$S8" -v f="log/$d.md" '
+      /^### / { show = (index($0, " · " me " · ") == 0); if (show) print "\n" substr($0, 5) " [" f "]"; next }
+      show && NF && !/^Append-only/ && !/^# Log/ { print "  " $0 }' "$l"
+  done | awk 'NR <= 200 { print } NR == 201 { print "(cut at 200 lines: read .brain/log/ for the rest)" }'
+  echo; echo "## Not yet filed (sources/inbox/)"
+  ls "$BRAIN/sources/inbox" 2>/dev/null | sed 's/^/- sources\/inbox\//' | grep . || echo "- nothing"
+  echo; echo "## Claims"
+  cmd_claims | grep . || echo "- none"
+  echo; echo "## Other live sessions"
+  open_sessions | grep . || echo "- none"
+  echo; echo "## Repos changed since the Freshness stamps"
+  repo_drift | grep . || echo "- none"
+  # the digest marker moves to now: this session has seen everything
+  if [ -n "$S8" ] && [ -f "$sf" ]; then
+    (cd "$BRAIN/log" && for l in *.md; do [ -f "$l" ] && printf '%s %s\n' "$l" "$(wc -l < "$l" | tr -d ' ')"; done) > "$BRAIN/sessions/$S8.seen"
+  fi
+  return 0
+}
+
+tokens() { echo $(( $(wc -c < "$1") / 4 )); }
+
+cmd_tidy_report() {
+  need_brain
+  echo "# Tidy report for $(pb_map_meta "$MAP" project)"
+  echo; echo "## Budget (auto tier, ~3k tokens)"; cmd_budget
+  echo; echo "## Big files (over 2,000 tokens: consider a split)"
+  pb_map_rows "$MAP" | awk -F'|' '$3 == "file" || $3 == "core" { print $1 "|" $2 }' | while IFS='|' read -r p t; do
+    [ -f "$BRAIN/$p" ] || continue; n=$(tokens "$BRAIN/$p"); [ "$n" -gt 2000 ] && echo "- $p ($t): ~$n tokens"
+  done | grep . || echo "- none"
+  echo; echo "## Folders (files, ~tokens)"
+  pb_map_rows "$MAP" | awk -F'|' '$3 == "dir" && $1 != "log/" && $1 != "archive/" { print $1 }' | while IFS= read -r p; do
+    [ -d "$BRAIN/$p" ] || continue
+    c=$(find "$BRAIN/$p" -type f | grep -c . || true); b=$(find "$BRAIN/$p" -type f -exec cat {} + 2>/dev/null | wc -c)
+    echo "- $p: $c files, ~$((b / 4)) tokens"
+  done
+  echo; echo "## Untouched for 30+ days (retire?)"
+  pb_map_rows "$MAP" | awk -F'|' '$3 == "file" { print $1 }' | while IFS= read -r p; do
+    [ -n "$(find "$BRAIN/$p" -mtime +30 2>/dev/null)" ] && echo "- $p"
+  done | grep . || echo "- none"
+  echo; echo "## Still the empty starter (nothing written yet)"
+  pb_map_rows "$MAP" | awk -F'|' '$3 == "file" { print $1 }' | while IFS= read -r p; do
+    [ -f "$BRAIN/$p" ] || continue
+    body=$(awk '/<!--/ { c = 1 } c { if (/-->/) c = 0; next } /^#/ || /^[[:space:]]*$/ { next } /^(In|Out):[[:space:]]*$/ { next } { print }' "$BRAIN/$p")
+    [ -z "$body" ] && echo "- $p"
+  done | grep . || echo "- none"
+  echo; echo "## Possible overlaps (holds share words)"
+  pb_map_rows "$MAP" | awk -F'|' '$3 != "core" { print $1 "|" tolower($4) }' | awk -F'|' '
+    { p[NR] = $1; n = split($2, w, /[^a-z]+/); for (i = 1; i <= n; i++) if (length(w[i]) > 4) has[NR, w[i]] = 1; words[NR] = $2 }
+    END { for (a = 1; a <= NR; a++) for (b = a + 1; b <= NR; b++) { c = 0; s = ""
+            n = split(words[a], w, /[^a-z]+/); delete seen
+            for (i = 1; i <= n; i++) if (length(w[i]) > 4 && has[b, w[i]] && !(w[i] in seen)) { c++; seen[w[i]] = 1; s = s " " w[i] }
+            if (c >= 2) printf "- %s and %s:%s\n", p[a], p[b], s } }' | grep . || echo "- none"
+  echo; echo "## Inbox (should be empty once filed)"
+  find "$BRAIN/sources/inbox" -type f 2>/dev/null | sed "s|^$BRAIN/|- |" | grep . || echo "- empty"
+  echo; echo "## Claims"; cmd_claims | grep . || echo "- none"
+  echo; echo "## Sessions marked live but idle for 24 h+"
+  for f in "$BRAIN"/sessions/*.md; do
+    [ -f "$f" ] && grep -q '^status: live' "$f" && [ -z "$(find "$f" "${f%.md}.seen" -mmin -1440 2>/dev/null)" ] && echo "- $(basename -- "$f" .md)"
+  done | grep . || echo "- none"
+  echo; echo "## Broken references"; cmd_refs_check | grep . || echo "- none"
+  echo; echo "## Map"; cmd_map_check 2>&1 | sed 's/^/- /'
+  echo; echo "## Privacy"; cmd_privacy_check | sed 's/^/- /'
+  return 0
+}
+
+# --- Format upgrades -----------------------------------------------------------------------------
+# Step N lives in scripts/upgrades/N.sh and takes a brain from format N-1 to N. Its first comment
+# line says what it does. It gets BRAIN and PB_ROOT in the environment.
+
+cmd_upgrade() {
+  need_brain; dry=0; [ "${1:-}" = --dry-run ] && dry=1
+  dir=${PB_UPGRADES:-$PB_ROOT/scripts/upgrades}
+  cur=$(pb_map_meta "$MAP" format); cur=${cur:-0}
+  if [ "$cur" -eq "$PB_FORMAT" ]; then echo "up to date: brain format $cur"; return 0; fi
+  if [ "$cur" -gt "$PB_FORMAT" ]; then echo "REFUSED: the brain (format $cur) is newer than this plugin (format $PB_FORMAT). Update the plugin; nothing was changed."; return 3; fi
+  n=$((cur + 1)); while [ "$n" -le "$PB_FORMAT" ]; do
+    [ -f "$dir/$n.sh" ] || pb_die "missing upgrade step $dir/$n.sh"
+    echo "step $((n - 1)) → $n: $(sed -n '2s/^# *//p' "$dir/$n.sh")"; n=$((n + 1))
+  done
+  [ $dry = 1 ] && { echo "(dry run: nothing changed)"; return 0; }
+  mkdir -p "$BRAIN/archive/backups"; cp "$MAP" "$BRAIN/archive/backups/MAP.md.$(pb_stamp).bak"
+  n=$((cur + 1)); while [ "$n" -le "$PB_FORMAT" ]; do
+    BRAIN=$BRAIN PB_ROOT=$PB_ROOT sh "$dir/$n.sh" || pb_die "upgrade step $n failed; MAP.md backup is in archive/backups/"
+    awk -v n="$n" '/^```brain-map/ { inb = 1 } inb && /^format:/ { print "format: " n; next } { print }' "$MAP" | pb_replace "$MAP"
+    S8=$(printf '%s' "${BRAIN_SESSION:-upgrade}" | cut -c1-8)
+    struct_log "upgrade: brain format $((n - 1)) → $n: $(sed -n '2s/^# *//p' "$dir/$n.sh")"
+    n=$((n + 1))
+  done
+  cmd_claude_block >/dev/null
+  echo "upgraded to format $PB_FORMAT"; cmd_map_check
+}
+
+cmd_session_status() {   # session-status <live|handed-off|ended> [--session ID]
+  need_brain; st=""
+  while [ $# -gt 0 ]; do case "$1" in --session) opt_session=$2; shift 2 ;; *) st=$1; shift ;; esac; done
+  case "$st" in live|handed-off|ended) ;; *) pb_die 'usage: session-status live|handed-off|ended [--session ID]' ;; esac
+  my_session; f="$BRAIN/sessions/$S8.md"; [ -f "$f" ] || pb_die "no session file: sessions/$S8.md"
+  awk -v st="$st $(pb_now)" '/^status:/ && !d { print "status: " st; d = 1; next } { print }' "$f" | pb_replace "$f"
+  echo "session $S8: $st"
+}
+
 # ---------------------------------------------------------------------------------------------
 cmd=${1:-}; [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -439,6 +878,18 @@ case "$cmd" in
   privacy-check) cmd_privacy_check ;;
   transcripts) cmd_transcripts "$@" ;;
   transcript) cmd_transcript "$@" ;;
+  claim) cmd_claim "$@" ;;
+  release) cmd_release "$@" ;;
+  claims) cmd_claims "$@" ;;
+  move) cmd_move "$@" ;;
+  retire) cmd_retire "$@" ;;
+  retier) cmd_retier "$@" ;;
+  refs-check) cmd_refs_check ;;
+  capture) cmd_capture "$@" ;;
+  catchup) cmd_catchup "$@" ;;
+  tidy-report) cmd_tidy_report ;;
+  upgrade) cmd_upgrade "$@" ;;
+  session-status) cmd_session_status "$@" ;;
   slug) pb_slug "$(CDPATH= cd -- "${1:-.}" && pwd)" ;;
   find) pb_find_brain ;;
   version) echo "project-brain $(pb_version), brain format $PB_FORMAT" ;;

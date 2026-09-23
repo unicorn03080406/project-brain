@@ -12,7 +12,7 @@ Label facts [verified] (checked in code or data), [meeting] (someone said it) or
 <!-- - item · owner · due YYYY-MM-DD · status · [label] -->
 
 ## Claims
-<!-- - [claim] what · s:<session> · since HH:MMZ · expires YYYY-MM-DDTHH:MMZ -->
+<!-- claims are written by: brain.sh claim "<what>" (see the protocol skill) -->
 
 ## Blockers
 

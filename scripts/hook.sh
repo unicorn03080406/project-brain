@@ -95,6 +95,12 @@ end_session() {
     rm -f "$f" "$BRAIN/sessions/$S8.seen" "$BRAIN/sessions/$S8.att" "$BRAIN/sessions/$S8.pending"
     exit 0
   fi
+  # A closed chat cannot work on anything: release its claims so others can take them.
+  if grep -q " · s:$S8 · since " "$BRAIN/NOW.md" 2>/dev/null; then
+    n=$(BRAIN_SESSION=$S8 PB_BRAIN=$BRAIN sh "$PB_ROOT/scripts/brain.sh" release --all --session "$S8" 2>/dev/null | sed -n 's/^released: \([0-9]*\).*/\1/p')
+    [ "${n:-0}" -gt 0 ] && log_entry status claims "Session closed: released $n claim(s)."
+  fi
+  grep -q '^status: handed-off' "$f" && exit 0     # keep the handoff status
   awk -v now="$(pb_now)" '
     /^status:/ && !s { print "status: ended " now; s = 1; next }
     { print }' "$f" | pb_replace "$f"
@@ -118,21 +124,6 @@ now_summary() {
     END { flush() }' "$BRAIN/NOW.md"
 }
 
-open_sessions() {
-  now=$(pb_epoch)
-  for f in "$BRAIN"/sessions/*.md; do
-    [ -f "$f" ] || continue
-    id=$(basename -- "$f" .md)
-    [ "$id" = "$S8" ] && continue
-    grep -q '^status: live' "$f" || continue
-    # Stale after 24 h without a start or a prompt (both touch the session file or its marker).
-    seen="$BRAIN/sessions/$id.seen"; [ -f "$seen" ] || seen=$f
-    if [ -z "$(find "$f" "$seen" -mmin -1440 2>/dev/null)" ]; then continue; fi
-    goal=$(awk '/^## Goal/ { g = 1; next } /^## / { g = 0 } g && NF { print; exit }' "$f")
-    claims=$(awk '/^## Claims/ { c = 1; next } /^## / { c = 0 } c && /^- / { n++ } END { print n + 0 }' "$f")
-    printf -- '- s:%s · %s%s\n' "$id" "${goal:-goal not set}" "$( [ "$claims" -gt 0 ] && echo " · $claims claim(s)")"
-  done
-}
 
 today_tail() {
   f="$BRAIN/log/$(pb_today).md"
@@ -142,18 +133,6 @@ today_tail() {
        END { if (h != "") print h (l != "" ? ": " l : "") }' "$f" | tail -n 8 | sed 's/^/- /'
 }
 
-# Commits in each repo since the Freshness stamp in NOW.md.
-repo_drift() {
-  awk '/^## Freshness/ { f = 1; next } /^## / { f = 0 } f && /^- repo / { print }' "$BRAIN/NOW.md" |
-  while IFS= read -r line; do
-    path=$(printf '%s' "$line" | sed -n 's/^- repo \([^ ]*\) · last seen \([0-9a-f]*\).*/\1/p')
-    hash=$(printf '%s' "$line" | sed -n 's/^- repo \([^ ]*\) · last seen \([0-9a-f]*\).*/\2/p')
-    [ -n "$path" ] && [ -n "$hash" ] || continue
-    case "$path" in /*) r=$path ;; *) r="$PROJ/$path" ;; esac
-    n=$(git -C "$r" rev-list --count "$hash..HEAD" 2>/dev/null) || { echo "- $path: last-seen commit $hash not found"; continue; }
-    [ "$n" -gt 0 ] && echo "- $path: $n new commit(s) since $hash ($(git -C "$r" log -1 --format='%h %ad' --date=short 2>/dev/null))"
-  done
-}
 
 warnings() {
   fmt=$(pb_map_meta "$MAP" format)
@@ -166,6 +145,9 @@ warnings() {
   if [ "$(pb_map_meta "$MAP" mode)" = private ]; then
     sh "$PB_ROOT/scripts/brain.sh" privacy-check 2>/dev/null | grep -v 'privacy: ok\|not in a git repo' | sed 's/^privacy: /- Privacy: /'
   fi
+  now=$(pb_epoch)
+  x=$(awk -v now="$now" '/^## Claims/ { c = 1; next } /^## / { c = 0 } c && match($0, /\(@[0-9]+\)[[:space:]]*$/) { if (substr($0, RSTART + 2, RLENGTH - 3) + 0 < now) n++ } END { print n + 0 }' "$BRAIN/NOW.md")
+  [ "$x" -gt 0 ] && echo "- $x expired claim(s) in NOW.md: clear them with sh \"$PB_ROOT/scripts/brain.sh\" claims --expire."
   grep -q 'inferred: reconstructed' "$BRAIN/NOW.md" 2>/dev/null && echo "- NOW.md is still marked inferred: ask the owner to confirm it when it fits."
   return 0
 }

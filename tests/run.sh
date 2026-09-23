@@ -447,9 +447,184 @@ t_promptspeed() {
   check "capture and digest under 200 ms" '[ "$a" -lt 200 ]'
 }
 
+# --- M4: claims, structure changes, capture, catch-up, tidy, upgrade, skills --------------------
+brain4() {   # a small brain with a few files and references, in the current folder
+  b scaffold . --name Four --mode shared >/dev/null
+  b add "charter.md|auto|file|why and scope|always" >/dev/null
+  b add "decisions.md|demand|file|decisions log|before changing direction" >/dev/null
+  b add "specs|demand|dir|feature specs|building a feature" >/dev/null
+  b add "notes/todo.txt|demand|ext|owner todo list|planning" >/dev/null 2>&1
+  echo "spec" > .brain/specs/login.md
+  printf '\nSee decisions.md and .brain/decisions.md, specs/login.md; not mydecisions.md or decisions.md.bak.\n' >> .brain/charter.md
+  b claude-block >/dev/null
+}
+
+t_claims() {
+  brain4
+  check "claim works" 'b claim "split decisions.md" --session aaaa1111 | grep -q "^claimed: split decisions.md"'
+  check "claim shows in NOW.md and the session file" 'grep -q "^- \[claim\] split decisions.md · s:aaaa1111" .brain/NOW.md && grep -q "\[claim\] split decisions.md" .brain/sessions/aaaa1111.md'
+  check "an overlapping claim by another session is refused" '! b claim "merge decisions.md into charter.md" --session bbbb2222 >/dev/null'
+  check "a whole-brain structure claim conflicts with any claim" '! b claim "structure" --session bbbb2222 >/dev/null'
+  check "an unrelated claim is fine" 'b claim "update the NOW items" --session bbbb2222 >/dev/null'
+  check "the same session may add overlapping claims" 'b claim "retire decisions.md" --session aaaa1111 >/dev/null'
+  check "claims lists them as active" '[ "$(b claims | grep -c "^active")" = 3 ]'
+  check "release one claim" 'b release "split decisions.md" --session aaaa1111 | grep -q "released: 1" && ! grep -q "split decisions.md" .brain/NOW.md'
+  check "release --all clears only this session" 'b release --all --session aaaa1111 >/dev/null && ! grep -q "s:aaaa1111" .brain/NOW.md && grep -q "s:bbbb2222" .brain/NOW.md'
+  check "no session id: refused with a hint" '! b claim "x.md" 2>/dev/null'
+  b claim "retier charter.md" --hours 0 --session cccc3333 >/dev/null
+  sleep 1
+  check "expired claims are listed as expired" 'b claims | grep -q "^EXPIRED .*retier charter.md"'
+  check "the start summary warns about expired claims" 'hk session-start zzzz9999 startup | grep -q "1 expired claim"'
+  check "an expired claim does not block others" 'b claim "retier charter.md" --session dddd4444 >/dev/null'
+  check "claims --expire removes expired ones" 'b claim "x/y.md" --hours 0 --session eeee5555 >/dev/null; sleep 1; b claims --expire | grep -q "expired:" && ! grep -q "s:eeee5555" .brain/NOW.md'
+  check "other NOW.md sections are untouched by claims" 'grep -q "^## Focus" .brain/NOW.md && grep -q "^## Freshness" .brain/NOW.md'
+}
+
+t_move() {
+  brain4
+  check "move needs a claim" '! b move decisions.md choices.md --session aaaa1111 --why x 2>/dev/null && [ -f .brain/decisions.md ]'
+  b claim "rename decisions.md" --session aaaa1111 >/dev/null
+  check "move with a claim works" 'b move decisions.md choices.md --session aaaa1111 --why "clearer name" | grep -q "moved: decisions.md → choices.md"'
+  check "the file moved" '[ -f .brain/choices.md ] && [ ! -e .brain/decisions.md ]'
+  check "the MAP row moved, tier and holds kept" 'grep -q "^choices.md *| demand | file | decisions log" .brain/MAP.md && ! grep -q "^decisions.md" .brain/MAP.md'
+  check "references rewritten (plain and .brain/ forms)" 'grep -q "See choices.md and .brain/choices.md" .brain/charter.md'
+  check "look-alike names untouched" 'grep -q "not mydecisions.md or decisions.md.bak" .brain/charter.md'
+  check "claim lines are never rewritten" 'grep -q "\[claim\] rename decisions.md" .brain/NOW.md'
+  check "a structure entry is logged with old → new" 'grep -q "move: decisions.md → choices.md. Why: clearer name" .brain/log/$(date +%Y-%m-%d).md'
+  check "map-check and refs-check pass" 'b map-check && [ -z "$(b refs-check)" ]'
+  b claim "rename charter.md" --session aaaa1111 >/dev/null
+  check "moving an auto file updates the CLAUDE block" 'b move charter.md project-charter.md --session aaaa1111 --why x >/dev/null && grep -qx "@.brain/project-charter.md" CLAUDE.md && b map-check'
+  check "moving a folder" 'b claim "rename specs" --session aaaa1111 >/dev/null && b move specs features --session aaaa1111 --why x >/dev/null && [ -f .brain/features/login.md ] && grep -q "features/login.md" .brain/project-charter.md && b map-check'
+  check "the fixed core cannot be moved" 'b claim "structure" --session aaaa1111 >/dev/null 2>&1; ! b move NOW.md now2.md --session aaaa1111 --why x 2>/dev/null'
+  check "a workspace link cannot be moved" '! b move "@ext:notes/todo.txt" x.txt --session aaaa1111 --why x 2>/dev/null'
+}
+
+t_retire() {
+  brain4
+  b claim "retire specs" --session aaaa1111 >/dev/null
+  check "retire a folder" 'b retire specs --session aaaa1111 --why "unused" | grep -q "retired: specs/ → archive/specs/"'
+  check "moved to archive, never deleted" '[ -f .brain/archive/specs/login.md ] && [ ! -e .brain/specs ]'
+  check "the MAP row is gone" '! grep -q "^specs/" .brain/MAP.md'
+  check "references point to the archive" 'grep -q "archive/specs/login.md" .brain/charter.md'
+  check "retire needs a claim" '! b retire decisions.md --session bbbb2222 --why x 2>/dev/null'
+  b claim "merge decisions.md" --session aaaa1111 >/dev/null
+  check "retire after a merge: references point to the kept file" 'b retire decisions.md --refs-to charter.md --session aaaa1111 --why "merged" >/dev/null && grep -q "See charter.md and .brain/charter.md" .brain/charter.md && grep -q "(merged into charter.md)" .brain/log/$(date +%Y-%m-%d).md'
+  b claim "retire @ext:notes/todo.txt" --session aaaa1111 >/dev/null
+  mkdir -p notes && echo keep > notes/todo.txt
+  check "retiring a link drops the row and leaves the workspace file" 'b retire "@ext:notes/todo.txt" --session aaaa1111 --why x >/dev/null && ! grep -q "notes/todo.txt" .brain/MAP.md && [ "$(cat notes/todo.txt)" = keep ]'
+  echo x > .brain/archive/decisions.md.x
+  b add "decisions.md|demand|file|decisions again|x" >/dev/null; b claim "retire decisions.md" --session aaaa1111 >/dev/null
+  check "a second retire of the same name gets a dated archive name" 'b retire decisions.md --session aaaa1111 --why x | grep -q "archive/$(date +%Y-%m-%d)-decisions.md"'
+  check "the fixed core cannot be retired" '! b retire log --session aaaa1111 --why x 2>/dev/null'
+  check "map-check and refs-check pass" 'b map-check && [ -z "$(b refs-check)" ]'
+}
+
+t_retier() {
+  brain4
+  check "retier to auto adds the import" 'b retier decisions.md auto | grep -q "retiered: decisions.md demand → auto" && grep -qx "@.brain/decisions.md" CLAUDE.md'
+  check "retier back to demand removes it" 'b retier decisions.md demand >/dev/null && ! grep -q "@.brain/decisions.md" CLAUDE.md && b map-check'
+  check "bad tier rejected" '! b retier decisions.md always 2>/dev/null'
+  check "the fixed core cannot be retiered" '! b retier NOW.md auto 2>/dev/null'
+}
+
+t_refs() {
+  brain4
+  check "clean brain: no broken references" '[ -z "$(b refs-check)" ]'
+  echo "Details in sources/meetings/2026-01-01-gone.md and .brain/specs/nope.md" >> .brain/charter.md
+  check "broken brain paths are reported" 'b refs-check | grep -q "BROKEN: charter.md mentions sources/meetings/2026-01-01-gone.md" && b refs-check | grep -q "specs/nope.md"'
+  echo "The client repo has notes/meetings/x.md and src/app.py" >> .brain/charter.md
+  check "workspace paths are not reported" '! b refs-check | grep -q "src/app.py"'
+}
+
+t_capturecmd() {
+  brain4
+  printf 'x%%PDF bytes' > memo.pdf
+  check "capture a file from disk" 'b capture memo.pdf --session aaaa1111 | grep -q "saved: .brain/sources/inbox/.*-aaaa1111-memo.pdf" && cmp -s memo.pdf .brain/sources/inbox/*-memo.pdf'
+  check "the workspace file stays" '[ -f memo.pdf ]'
+  check "the same file twice is not stored twice" 'b capture memo.pdf --session aaaa1111 | grep -q "already in the brain" && [ "$(ls .brain/sources/inbox | grep -c memo.pdf)" = 1 ]'
+  printf 'Call notes\npassword: abc123\n' > notes.txt
+  check "text files are redacted" 'b capture notes.txt --session aaaa1111 | grep -q "credentials removed" && ! grep -q abc123 .brain/sources/inbox/*-notes.txt'
+  check "text on stdin gets metadata" 'echo "Kofi approved the budget" | b capture --kind note --session aaaa1111 >/dev/null && grep -q "^detected: note" .brain/sources/inbox/*-aaaa1111.md'
+  check "a capture is logged" 'grep -q "capture · inbox" .brain/log/$(date +%Y-%m-%d).md'
+  check "empty stdin is refused" '! printf "" | b capture --session aaaa1111 2>/dev/null'
+}
+
+t_catchup() {
+  brain4
+  hk session-start aaaa1111 startup >/dev/null; hk session-start bbbb2222 startup >/dev/null
+  echo "A decided the thing" | b log --type decision --session aaaa1111 >/dev/null
+  echo "B own note" | b log --type status --session bbbb2222 >/dev/null
+  echo x > .brain/sources/inbox/20260101-000000-aaaa1111.md
+  out=$(b catchup --session bbbb2222)
+  check "shows other sessions' entries in full" 'printf "%s" "$out" | grep -q "s:aaaa1111 · decision" && printf "%s" "$out" | grep -q "A decided the thing"'
+  check "leaves out its own entries" '! printf "%s" "$out" | grep -q "B own note"'
+  check "lists unfiled captures" 'printf "%s" "$out" | grep -q "sources/inbox/20260101-000000-aaaa1111.md"'
+  check "lists other live sessions" 'printf "%s" "$out" | grep -q "s:aaaa1111"'
+  echo q > q.txt
+  check "the digest does not repeat what catchup showed" '! hp bbbb2222 q.txt | grep -q "A decided the thing"'
+}
+
+t_tidy() {
+  brain4
+  head -c 12000 /dev/zero | tr '\0' 'x' | fold -w 80 > .brain/decisions.md
+  b add "glossary.md|demand|file|terms and names from feature specs|x" >/dev/null
+  touch -t 202001010000 .brain/charter.md
+  echo x > .brain/sources/inbox/leftover.md
+  out=$(b tidy-report)
+  check "big files are flagged" 'printf "%s" "$out" | grep -q "decisions.md (demand): ~3[0-9]* tokens"'
+  check "stale files are flagged" 'printf "%s" "$out" | sed -n "/Untouched/,/^\$/p" | grep -q charter.md'
+  check "empty starters are flagged" 'printf "%s" "$out" | sed -n "/empty starter/,/^\$/p" | grep -q glossary.md'
+  check "possible overlaps are listed" 'printf "%s" "$out" | sed -n "/overlaps/,/^\$/p" | grep -q "glossary.md"'
+  check "unfiled captures are listed" 'printf "%s" "$out" | grep -q "sources/inbox/leftover.md"'
+  check "map and privacy sections are there" 'printf "%s" "$out" | grep -q "^## Map" && printf "%s" "$out" | grep -q "^## Privacy"'
+  check "the report changes nothing" 'sums() { find . -type f | LC_ALL=C sort | while read -r f; do cksum "$f"; done; }; sums > "$W/tidy1"; b tidy-report >/dev/null; sums | cmp -s - "$W/tidy1"'
+}
+
+t_upgrade() {
+  brain4
+  mkdir -p up
+  printf '#!/bin/sh\n# add a risks.md file and its MAP row\nsh "$PB_ROOT/scripts/brain.sh" add "risks.md|demand|file|risks|planning" >/dev/null\n' > up/2.sh
+  check "same format: up to date" 'b upgrade | grep -q "up to date: brain format 1"'
+  check "the start summary warns when the brain is older" 'PB_FORMAT_OVERRIDE=2 hk session-start up111111 startup | grep -q "older than the plugin"'
+  cp .brain/charter.md charter.before
+  check "dry run lists the steps and changes nothing" 'PB_FORMAT_OVERRIDE=2 PB_UPGRADES="$(pwd)/up" b upgrade --dry-run | grep -q "step 1 → 2: add a risks.md file" && [ ! -e .brain/risks.md ]'
+  check "upgrade applies the step" 'PB_FORMAT_OVERRIDE=2 PB_UPGRADES="$(pwd)/up" b upgrade | grep -q "upgraded to format 2" && [ -f .brain/risks.md ] && grep -qx "format: 2" .brain/MAP.md'
+  check "MAP.md backed up first" 'ls .brain/archive/backups/MAP.md.*.bak >/dev/null 2>&1 && grep -qx "format: 1" .brain/archive/backups/MAP.md.*.bak'
+  check "content untouched" 'cmp -s charter.before .brain/charter.md'
+  check "the upgrade is logged" 'grep -q "upgrade: brain format 1 → 2" .brain/log/$(date +%Y-%m-%d).md'
+  check "an older plugin refuses a newer brain" '! b upgrade >/dev/null && b upgrade | grep -q "REFUSED"'
+  check "the start summary says to update the plugin" 'hk session-start up222222 startup | grep -q "newer than this plugin"'
+  check "a missing step is an error, nothing changed" 'PB_FORMAT_OVERRIDE=3 PB_UPGRADES="$(pwd)/up" b upgrade 2>&1 | grep -q "missing upgrade step" && grep -qx "format: 2" .brain/MAP.md'
+}
+
+t_sessionstatus() {
+  brain4
+  hk session-start aaaa1111 startup >/dev/null
+  check "mark handed off" 'b session-status handed-off --session aaaa1111 >/dev/null && grep -q "^status: handed-off" .brain/sessions/aaaa1111.md'
+  check "a handed-off session is not listed as live" '! hk session-start bbbb2222 startup | grep -q "s:aaaa1111 ·"'
+  check "session end keeps the handed-off status" 'echo hi > q.txt; hp aaaa1111 q.txt >/dev/null; b session-status handed-off --session aaaa1111 >/dev/null; hk session-end aaaa1111 other >/dev/null; grep -q "^status: handed-off" .brain/sessions/aaaa1111.md'
+  hk session-start cccc3333 startup >/dev/null; hp cccc3333 q.txt >/dev/null; b claim "the S31 question" --session cccc3333 >/dev/null
+  check "closing a chat releases its claims and logs it" 'hk session-end cccc3333 other >/dev/null; ! grep -q "s:cccc3333" .brain/NOW.md && grep -q "Session closed: released 1 claim" .brain/log/$(date +%Y-%m-%d).md'
+  check "bad state rejected" '! b session-status sleeping --session aaaa1111 2>/dev/null'
+}
+
+t_skills() {
+  for s in init protocol catchup handoff tidy capture; do
+    f="$ROOT/skills/$s/SKILL.md"
+    check "$s: frontmatter with name and description" '[ "$(head -n 1 "$f")" = "---" ] && grep -q "^name: $s\$" "$f" && grep -q "^description: ." "$f"'
+    check "$s: helper path points at brain.sh" 'grep -q "\${CLAUDE_SKILL_DIR}/../../scripts/brain.sh" "$f"'
+  done
+  check "protocol is model-only; init, handoff, tidy, capture are user-only" 'grep -q "^user-invocable: false" "$ROOT/skills/protocol/SKILL.md" && for s in init handoff tidy capture; do grep -q "^disable-model-invocation: true" "$ROOT/skills/$s/SKILL.md" || exit 1; done'
+  check "every brain.sh command a skill uses exists" 'for c in $(grep -ho "B [a-z-]*" "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/init/reference/*.md | awk "{print \$2}" | sort -u); do case "$c" in in|is|and|or|below|to|log|a) continue;; esac; sh "$B" 2>&1 | grep -q "^  $c" || { echo "missing: $c" >&2; exit 1; }; done'
+  needs_perm() { for f in "$ROOT"/skills/*/SKILL.md; do grep -q '^```!' "$f" || continue; sed -n '1,/^---$/p' "$f" | grep -q '^allowed-tools: Bash(sh:\*)' || { echo "$f" >&2; return 1; }; done; }
+  check "skills that run a command up front declare Bash permission for it" needs_perm
+  check "dynamic context blocks call commands that exist" 'grep -h "brain.sh\" [a-z-]*" "$ROOT"/skills/*/SKILL.md | grep -o "brain.sh\" [a-z-]*" | awk "{print \$2}" | sort -u | while read -r c; do sh "$B" 2>&1 | grep -q "^  $c" || exit 1; done'
+}
+
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
          hookquiet hookstart hookbudget hookdrift hookspeed hooksjson \
-         detector redact capture digest images attach phantom promptspeed; do run "$t"; done
+         detector redact capture digest images attach phantom promptspeed \
+         claims move retire retier refs capturecmd catchup tidy upgrade sessionstatus skills; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo

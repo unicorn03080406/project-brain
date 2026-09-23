@@ -1,0 +1,2 @@
+# Brain format upgrades: N.sh takes a brain from format N-1 to N. Format 1 is the first;
+# there are no steps yet. See skills/init/reference/upgrades.md.

@@ -9,7 +9,11 @@ real client workspace. `PB` below is the path to your clone of this repo.
   repo. In **Plugins**, click **Install** on project-brain. Start a new chat to load it.
 - Terminal CLI: `/plugin marketplace add <path to this repo>`, then
   `/plugin install project-brain@project-brain`, or `claude --plugin-dir "$PB"` for one session.
-- A folder marketplace is used in place, so edits to this repo apply from the next session.
+- Claude Code copies the plugin into its cache at install, by version. Hooks and the skills Claude
+  can call read this folder live, but the slash commands you type come from the copy. After
+  changing skills: raise "version" in .claude-plugin/plugin.json, then in /plugins refresh the
+  marketplace and update the plugin (CLI: `claude plugin marketplace update project-brain` and
+  `claude plugin update project-brain@project-brain`), then reload the VS Code window.
 - The steps below say `claude --plugin-dir "$PB"`; in VS Code, open the folder instead and start
   a new Claude Code chat there. Run the `sh ...` lines in VS Code's terminal.
 - VS Code: check that typing `/` lists `/project-brain:init`, and that init's reply starts from
@@ -128,3 +132,25 @@ Use `~/pb-test/research`. Keep two chats open side by side: **A** and **B**.
 - [ ] Close a chat that never got a prompt: no file for it stays in `.brain/sessions/`.
 - [ ] In a folder with no `.brain/`, paste meeting notes: nothing is saved anywhere.
 - [ ] Windows: the first two checks in a Claude Code session on Windows with Git Bash.
+
+## M4. Skills
+
+Use `~/pb-test/research` (or `~/pb-test/northwind`).
+
+- [ ] **Protocol, one-liner**: tell a chat "Imani decided the briefing is slides, 20 min + 10 min Q&A".
+      It records it without being asked: a verbatim note in `sources/`, a line in decisions.md,
+      a log entry.
+- [ ] **Claims**: in chat A say "claim the S31 open question". In chat B ask it to take the same
+      item: B sees A's claim (NOW.md Claims) and does not take it.
+- [ ] **/project-brain:catchup** in a chat that has been open a while: a short summary of what
+      other chats did; the next prompt's digest does not repeat it.
+- [ ] **/project-brain:tidy**: a report with proposals; nothing changes until you choose.
+      Make decisions.md very long first (paste a lot into it) to see a split proposed.
+- [ ] Accept a split or a retire: afterwards `sh "$PB/scripts/brain.sh" map-check` and
+      `refs-check` are clean, the old file is in `archive/`, and the log has a `structure` entry.
+- [ ] **/project-brain:capture ~/pb-test/probe-memo.pdf**: says it is already in the brain (same bytes).
+      Capture any other file: it lands in `sources/`, indexed, with a note.
+- [ ] **/project-brain:handoff**: the session file gets a Goal and a Handoff a stranger could follow;
+      claims released; status `handed-off` (it stays so after the chat closes).
+- [ ] The next new chat's start summary reflects the handoff (NOW.md, today's log).
+- [ ] Close a chat that holds a claim, without a handoff: the claim is released and logged.

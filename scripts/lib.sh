@@ -3,7 +3,7 @@
 # except where a caller explicitly asks (CLAUDE.md block, .git/info/exclude).
 
 PB_ROOT=${PB_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
-PB_FORMAT=1
+PB_FORMAT=${PB_FORMAT_OVERRIDE:-1}   # brain format this plugin writes (override only in tests)
 PB_AUTO_BUDGET=3000   # tokens, estimated as bytes/4
 
 pb_version() {
@@ -136,4 +136,34 @@ pb_find_files() { # pb_find_files DIR [maxdepth]: workspace files, skipping junk
   # shellcheck disable=SC2086
   find "$1" -maxdepth "$2" \( -type d \( $prune -path "$1/.brain" \) \) -prune \
     -o -type f ! -name .DS_Store -print 2>/dev/null
+}
+
+# --- Shared by the hooks and brain.sh (need BRAIN, PROJ and S8 set) ----------------------------
+
+open_sessions() {
+  now=$(pb_epoch)
+  for f in "$BRAIN"/sessions/*.md; do
+    [ -f "$f" ] || continue
+    id=$(basename -- "$f" .md)
+    [ "$id" = "$S8" ] && continue
+    grep -q '^status: live' "$f" || continue
+    # Stale after 24 h without a start or a prompt (both touch the session file or its marker).
+    seen="$BRAIN/sessions/$id.seen"; [ -f "$seen" ] || seen=$f
+    if [ -z "$(find "$f" "$seen" -mmin -1440 2>/dev/null)" ]; then continue; fi
+    goal=$(awk '/^## Goal/ { g = 1; next } /^## / { g = 0 } g && NF { print; exit }' "$f")
+    claims=$(awk '/^## Claims/ { c = 1; next } /^## / { c = 0 } c && /^- / { n++ } END { print n + 0 }' "$f")
+    printf -- '- s:%s · %s%s\n' "$id" "${goal:-goal not set}" "$( [ "$claims" -gt 0 ] && echo " · $claims claim(s)")"
+  done
+}
+# Commits in each repo since the Freshness stamp in NOW.md.
+repo_drift() {
+  awk '/^## Freshness/ { f = 1; next } /^## / { f = 0 } f && /^- repo / { print }' "$BRAIN/NOW.md" |
+  while IFS= read -r line; do
+    path=$(printf '%s' "$line" | sed -n 's/^- repo \([^ ]*\) · last seen \([0-9a-f]*\).*/\1/p')
+    hash=$(printf '%s' "$line" | sed -n 's/^- repo \([^ ]*\) · last seen \([0-9a-f]*\).*/\2/p')
+    [ -n "$path" ] && [ -n "$hash" ] || continue
+    case "$path" in /*) r=$path ;; *) r="$PROJ/$path" ;; esac
+    n=$(git -C "$r" rev-list --count "$hash..HEAD" 2>/dev/null) || { echo "- $path: last-seen commit $hash not found"; continue; }
+    [ "$n" -gt 0 ] && echo "- $path: $n new commit(s) since $hash ($(git -C "$r" log -1 --format='%h %ad' --date=short 2>/dev/null))"
+  done
 }
