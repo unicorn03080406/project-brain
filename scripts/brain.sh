@@ -332,11 +332,15 @@ cmd_map_check() {
 $rows
 EOF
   # Every file in the brain must be covered by a row (itself or a mapped folder).
-  (cd "$BRAIN" && find . -type f ! -path './.locks/*' ! -name '.DS_Store' | sed 's|^\./||') | while read -r f; do
-    printf '%s\n' "$rows" | awk -F'|' -v f="$f" '
-      $1 == f { ok = 1 } ($1 ~ /\/$/) && index(f, $1) == 1 { ok = 1 } END { exit !ok }' \
-      || echo "ERROR: not in MAP.md: $f"
-  done | grep . && err=1
+  # One awk pass: rows first (from the variable), then the file list.
+  (cd "$BRAIN" && find . -type f ! -path './.locks/*' ! -name '.DS_Store' | sed 's|^\./||') \
+    | PB_ROWS=$rows awk '
+        BEGIN { n = split(ENVIRON["PB_ROWS"], r, "\n")
+                for (i = 1; i <= n; i++) { split(r[i], c, "|"); p = c[1]
+                  if (p ~ /\/$/) dirs[++nd] = p; else files[p] = 1 } }
+        { if ($0 in files) next
+          for (i = 1; i <= nd; i++) if (index($0, dirs[i]) == 1) next
+          print "ERROR: not in MAP.md: " $0 }' | grep . && err=1
   # The CLAUDE block must import exactly the auto rows.
   mode=$(pb_map_meta "$MAP" mode)
   case "$mode" in private) t="$PROJ/CLAUDE.local.md" ;; *) t="$PROJ/CLAUDE.md" ;; esac

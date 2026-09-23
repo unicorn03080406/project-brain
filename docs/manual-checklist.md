@@ -85,3 +85,23 @@ claude --plugin-dir "$PB"     # then /project-brain:init, pick private
 ### Windows (Git Bash installed)
 - [ ] `bash tests/run.sh` passes in Git Bash.
 - [ ] The NEW research test above works from a Claude Code session on Windows.
+
+## M2. Session start
+
+Use the brains from the M1 tests (`~/pb-test/northwind`, `~/pb-test/research`).
+
+- [ ] Open `~/pb-test/northwind` and start a new chat. Ask: "What do you know about this project
+      so far? Don't read any files." It should answer from the start summary: go-live 2026-10-15,
+      open items, and that NOW.md is still marked inferred.
+- [ ] `.brain/sessions/` has a file for this chat with `status: live`.
+- [ ] Start a **second** chat in the same folder (keep the first open). Ask: "Are other sessions
+      live on this project?" It should name the first chat's `s:` id.
+- [ ] Ask the second chat: "Run `echo $BRAIN_SESSION`." It prints its own short id.
+- [ ] Close a chat (or quit VS Code): its session file changes to `status: ended ...`.
+- [ ] Add a commit in `carrier-sync` (any small change), start a new chat: the summary reports
+      "carrier-sync: 1 new commit(s) since 802ad20".
+- [ ] Type `/compact` in a long chat: afterwards it still knows the project (the summary is
+      injected again after compaction).
+- [ ] Open a folder with no `.brain/` (any other project): nothing about the project brain
+      appears, and nothing is created there.
+- [ ] Windows: the same first two checks in a Claude Code session on Windows with Git Bash.

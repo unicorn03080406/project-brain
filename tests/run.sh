@@ -190,7 +190,102 @@ t_skill() {
   check "no script has CRLF line endings" '! grep -rl "$(printf "\r")" "$ROOT/scripts" "$ROOT/tests/run.sh"'
 }
 
-for t in json scaffold add mapcheck claudeblock githide log detect adopt skill; do run "$t"; done
+# --- M2: SessionStart / SessionEnd hook -----------------------------------------------------------
+H="$ROOT/scripts/hook.sh"
+hk() {   # hk <event> <session id> <source> [cwd]: run the hook like Claude Code does
+  printf '{"session_id":"%s","transcript_path":"/nowhere.jsonl","cwd":"%s","hook_event_name":"x","source":"%s"}' \
+    "$2" "${4:-$(pwd)}" "$3" | ${PB_SH:-sh} "$H" "$1"
+}
+ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000' 2>/dev/null || echo $(( $(date +%s) * 1000 )); }
+
+t_hookquiet() {
+  mkdir plain && cd plain
+  check "no brain: prints nothing" '[ -z "$(hk session-start s1 startup)" ]'
+  check "no brain: creates nothing" 'hk session-start s1 startup >/dev/null; [ -z "$(ls -A)" ]'
+  check "no brain: exit code 0" 'hk session-start s1 startup; hk session-end s1 other'
+  check "garbage input: silent, exit 0" '[ -z "$(printf "not json" | sh "$H" session-start)" ]'
+  check "empty input: silent, exit 0" '[ -z "$(sh "$H" session-start < /dev/null)" ]'
+  check "unknown event: silent, exit 0" '[ -z "$(hk nonsense s1 startup)" ]'
+}
+
+t_hookstart() {
+  b scaffold . --name "Hook Co" --mode private >/dev/null
+  printf '## Focus\nShip the importer [meeting]\n' > focus.txt
+  awk '/^## Focus/ { print; getline; print "Ship the importer [meeting] (sources/x.md)"; next } { print }' .brain/NOW.md > n && mv n .brain/NOW.md
+  echo "decided X" | b log --type decision --session other111 >/dev/null
+  export CLAUDE_ENV_FILE="$W/envfile"; : > "$CLAUDE_ENV_FILE"
+  out=$(hk session-start abcdef1234567 startup)
+  check "summary names the project" 'printf "%s" "$out" | grep -q "^# Project brain: Hook Co"'
+  check "summary tells the session its id" 'printf "%s" "$out" | grep -q "You are session s:abcdef12"'
+  check "summary includes NOW.md focus" 'printf "%s" "$out" | grep -q "Ship the importer"'
+  check "summary skips empty NOW sections" '! printf "%s" "$out" | grep -q "^### Blockers"'
+  check "summary includes today log tail" 'printf "%s" "$out" | grep -q "s:other111 · decision: decided X"'
+  check "session file registered as live" 'grep -q "^status: live" .brain/sessions/abcdef12.md && grep -q "^last-start: .*(startup)" .brain/sessions/abcdef12.md'
+  check "seen marker written" 'grep -q "^$(date +%Y-%m-%d).md [0-9]" .brain/sessions/abcdef12.seen'
+  check "env file exports session and brain" 'grep -q "BRAIN_SESSION=.abcdef12" "$CLAUDE_ENV_FILE" && grep -q "PB_BRAIN=" "$CLAUDE_ENV_FILE"'
+  check "map-check still passes (session files are mapped)" 'b claude-block >/dev/null && b map-check'
+  out2=$(hk session-start 99999999aaaa startup)
+  check "a second session sees the first as live" 'printf "%s" "$out2" | grep -q "^- s:abcdef12 · goal not set"'
+  check "a session does not list itself" '! printf "%s" "$out2" | grep -q "^- s:99999999"'
+  touch -t 202001010000 .brain/sessions/abcdef12.seen
+  check "sessions idle for over 24 h are not listed" '! hk session-start 77777777 startup | grep -q "s:abcdef12"'
+  hk session-end abcdef1234567 other >/dev/null
+  check "session end marks the file ended" 'grep -q "^status: ended " .brain/sessions/abcdef12.md'
+  check "resume makes it live again" 'hk session-start abcdef1234567 resume >/dev/null; grep -q "^status: live" .brain/sessions/abcdef12.md && grep -q "(resume)" .brain/sessions/abcdef12.md'
+  check "only one last-start line after several starts" '[ "$(grep -c "^last-start:" .brain/sessions/abcdef12.md)" = 1 ]'
+  check "compact says the context was compacted" 'hk session-start abcdef1234567 compact | grep -q "Context was just compacted"'
+  check "works when the hook runs from inside .brain/" '(cd .brain && hk session-start abcdef1234567 startup "$(pwd)") | grep -q "Hook Co"'
+  check "inferred NOW.md is flagged" 'b scaffold "$W/hookstart2" --name X --mode shared --adopt >/dev/null 2>&1 || { mkdir -p "$W/hookstart2" && b scaffold "$W/hookstart2" --name X --mode shared --adopt >/dev/null; }; (cd "$W/hookstart2" && hk session-start s2 startup) | grep -q "still marked inferred"'
+  unset CLAUDE_ENV_FILE
+}
+
+t_hookbudget() {
+  b scaffold . --name Big --mode private >/dev/null
+  i=0; while [ $i -lt 400 ]; do echo "- item $i with a fairly long description to fill the budget quickly · owner · open"; i=$((i+1)); done > items.txt
+  awk -v f=items.txt '/^## Items/ { print; while ((getline l < f) > 0) print l; next } { print }' .brain/NOW.md > n && mv n .brain/NOW.md
+  i=0; while [ $i -lt 60 ]; do echo "entry $i" | b log --type status >/dev/null; i=$((i+1)); done
+  out=$(hk session-start bigbig12 startup)
+  check "long sections are cut with a pointer" 'printf "%s" "$out" | grep -q "more lines in .brain/NOW.md"'
+  check "whole summary stays under 8000 characters" '[ "$(printf "%s" "$out" | wc -c)" -le 8000 ]'
+  check "today tail shows at most 8 entries" '[ "$(printf "%s" "$out" | grep -c "· status: entry")" -le 8 ]'
+}
+
+t_hookdrift() {
+  sh "$ROOT/tests/fixtures/make-adopt-ws.sh" ws >/dev/null; cd ws
+  b scaffold . --name NW --mode shared --adopt >/dev/null
+  h=$(git -C carrier-sync log -1 --format=%h)
+  awk -v h="$h" '/^## Freshness/ { print; print "- repo carrier-sync · last seen " h " · 2026-09-15"; print "- repo gone-repo · last seen abc1234 · 2026-09-01"; next } { print }' .brain/NOW.md > n && mv n .brain/NOW.md
+  check "no drift when nothing changed" '! hk session-start d1 startup | grep -q "carrier-sync: .* new commit"'
+  (cd carrier-sync && echo x > new.py && git add new.py && git -c user.name=T -c user.email=t@e commit -qm "new work")
+  check "new commits since the Freshness stamp are reported" 'hk session-start d1 startup | grep -q "carrier-sync: 1 new commit(s) since $h"'
+  check "a missing repo is reported, not fatal" 'hk session-start d1 startup | grep -q "gone-repo: last-seen commit abc1234 not found"'
+}
+
+t_hookspeed() {
+  sh "$ROOT/tests/fixtures/make-adopt-ws.sh" ws >/dev/null; cd ws
+  b scaffold . --name NW --mode private --adopt >/dev/null
+  i=0; while [ $i -lt 30 ]; do echo "entry $i" | b log --type status --session s$i >/dev/null; i=$((i+1)); done
+  i=0; while [ $i -lt 6 ]; do hk session-start "sess$i" startup >/dev/null; i=$((i+1)); done
+  t0=$(ms); i=0; while [ $i -lt 5 ]; do hk session-start speed123 startup >/dev/null; i=$((i+1)); done; t1=$(ms)
+  avg=$(( (t1 - t0) / 5 ))
+  echo "        session-start average: ${avg} ms"
+  check "session-start under 1000 ms on average" '[ "$avg" -lt 1000 ]'
+  cd "$W" && mkdir -p quiet && cd quiet
+  t0=$(ms); i=0; while [ $i -lt 5 ]; do hk session-start q startup >/dev/null; i=$((i+1)); done; t1=$(ms)
+  avg=$(( (t1 - t0) / 5 )); echo "        no-brain exit average: ${avg} ms"
+  check "no-brain exit under 150 ms on average" '[ "$avg" -lt 150 ]'
+}
+
+t_hooksjson() {
+  j="$ROOT/hooks/hooks.json"
+  check "hooks.json exists and names both events" 'grep -q "\"SessionStart\"" "$j" && grep -q "\"SessionEnd\"" "$j"'
+  check "every hook command points at an existing script" 'for s in $(grep -o "scripts/[a-z.-]*\.sh" "$j" | sort -u); do [ -f "$ROOT/$s" ] || exit 1; done'
+  check "commands use CLAUDE_PLUGIN_ROOT and sh" '! grep "\"command\"" "$j" | grep -v "sh \\\\\"\${CLAUDE_PLUGIN_ROOT}/"'
+  check "no probe hook left active" '! grep -q probe "$j"'
+}
+
+for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
+         hookquiet hookstart hookbudget hookdrift hookspeed hooksjson; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo

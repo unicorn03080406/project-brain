@@ -1,0 +1,11 @@
+{
+  "description": "project-brain: register sessions and inject the brain summary. Silent in projects without .brain/.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" session-start", "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.sh\" session-end", "timeout": 2 }] }
+    ]
+  }
+}
