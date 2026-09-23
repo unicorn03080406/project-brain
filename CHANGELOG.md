@@ -1,0 +1,25 @@
+# Changelog
+
+Versions follow `MAJOR.MINOR.PATCH`:
+- **PATCH** (1.0.0 → 1.0.1): fixes only. Nothing to do.
+- **MINOR** (1.0 → 1.1): new features; the brain format is unchanged. Nothing to do.
+- **MAJOR** (1.x → 2.0): the brain format changes. The first chat in each project says so; run
+  `/project-brain:init` there to upgrade (dry run first, backup, nothing lost).
+
+Each entry names the brain format it writes.
+
+## 1.0.0 (2026-09-23), brain format 1
+
+First release.
+
+- `/project-brain:init`: NEW mode from an intake, ADOPT mode from a workspace in progress (dry
+  run, links instead of copies, backfilled log, NOW.md marked inferred, conflicts listed). Private
+  or shared mode. Offers to turn off the Claude credit in commits and pull requests.
+- Hooks: a start summary for every chat (NOW.md, live chats, today's log, repo changes,
+  warnings); pasted project material saved verbatim with credentials removed; pasted images,
+  attached PDFs and files saved; a per-prompt digest of what other chats added; session
+  registration; claims released when a chat closes.
+- Skills: protocol (Claude's filing and structure rules), catchup, handoff, tidy, capture.
+- Claims, and structure changes (add, split, merge, move, retire, retier) that keep MAP.md, the
+  CLAUDE.md block and references in step.
+- Runs on macOS, Linux and Windows (Git Bash). Needs only sh, awk and git.
