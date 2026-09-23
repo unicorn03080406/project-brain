@@ -1,0 +1,17 @@
+notes from today's call
+
+<pasted_content id="t1">
+WEBVTT
+
+00:00:03.120 --> 00:00:07.450
+Priya Nair: Okay, let's start. Luis, where are we on staging?
+
+00:00:07.900 --> 00:00:14.200
+Luis Ortega: Staging WMS is up. Prod credentials need a ticket with security, takes about a week.
+
+00:00:14.800 --> 00:00:21.000
+Priya Nair: Then file it today. Dana, can the retry fix land before Friday?
+
+00:00:21.300 --> 00:00:25.900
+Dana Kim: Yes, I'll have it in review Thursday.
+</pasted_content>

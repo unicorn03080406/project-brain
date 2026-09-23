@@ -1,0 +1,21 @@
+why does this fail?
+
+<pasted_content id="t1">
+import time
+from wms_adapter import post_status
+
+def retry(fn, n=3):
+    for attempt in range(n):
+        try:
+            return fn()
+        except TimeoutError:
+            time.sleep(2 ** attempt)
+    raise RuntimeError("gave up")
+
+def run():
+    while True:
+        events = fetch_events()
+        for e in events:
+            retry(lambda: post_status(map_event(e)))
+        time.sleep(300)
+</pasted_content>

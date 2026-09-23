@@ -1,0 +1,2 @@
+What's the difference between the staging and prod WMS URLs in the config, and which one does
+the test suite hit by default? I want to make sure we never post test events to prod.

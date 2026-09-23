@@ -1,0 +1,13 @@
+
+
+<pasted_content id="t1">
+Budget review with Imani, 30 Sep
+
+Item            Planned   Spent   Note
+Field visits    2,000     1,450   one more visit in Oct
+Data storage      300       120
+Contractor fee 24,000     7,200   D1 paid
+Contingency     1,500         0   keep for sensor replacements
+
+Imani: contingency can cover the S31 replacement.
+</pasted_content>

@@ -1,0 +1,12 @@
+
+
+<pasted_content id="t1">
+<div class="planner">
+  <h2>This week</h2>
+  <ul id="meals">
+    <li data-day="mon">Lentil soup</li>
+    <li data-day="tue">Stir fry</li>
+  </ul>
+  <button onclick="generateList()">Make shopping list</button>
+</div>
+</pasted_content>

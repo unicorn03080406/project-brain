@@ -1,0 +1,12 @@
+client's requirements for the report
+
+<pasted_content id="t1">
+Exceptions report requirements (from Priya, 2026-09-12)
+
+The report goes out daily at 07:00 local time to ops-leads@northwind.example.
+It lists every shipment that entered EXCEPTION status in the previous 24 hours, grouped by
+reason (damaged, lost, refused, address issue). Each line shows the shipment id, carrier
+reference, last known location and the time the exception was raised.
+If there were no exceptions, the email still goes out and says so.
+The report must not include customer names or addresses.
+</pasted_content>

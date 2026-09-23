@@ -1,0 +1,14 @@
+
+
+<pasted_content id="t1">
+export interface PantryItem {
+  id: string;
+  householdId: string;
+  name: string;
+  staple: boolean;
+}
+
+export async function addItem(db: Db, item: PantryItem): Promise<void> {
+  await db.insert("pantry_items", item);
+}
+</pasted_content>

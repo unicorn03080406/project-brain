@@ -1,0 +1,16 @@
+use this as a template
+
+<pasted_content id="t1">
+## Usage
+
+```bash
+pip install -r requirements.txt
+export CARRIER_API_URL=https://api.roadrunner.example/v2
+python sync.py --once
+```
+
+```python
+from sync import run
+run(poll_seconds=60)
+```
+</pasted_content>

@@ -1,0 +1,15 @@
+
+
+<pasted_content id="t1">
+Imani Okafor  0:02
+So the question for the board is simple: can we retire two gauges or not.
+
+Tomas Reyes  0:09
+From the field side, the sensors hold up if we clean them every six weeks.
+
+Imani Okafor  0:15
+And if we don't?
+
+Tomas Reyes  0:17
+Drift starts around week seven. Up to four centimetres by week ten.
+</pasted_content>

@@ -1,0 +1,10 @@
+
+
+<pasted_content id="t1">
+NW-142 Map EXCEPTION sub-reasons to WMS reason codes
+Reporter: Luis Ortega   Priority: High   Due: 2026-10-08
+Description:
+The WMS v2 API needs a reason code on status X. Carrier sends free-text reasons. We agreed on
+this mapping: "damaged" -> DMG, "lost" -> LST, "refused" -> RFS, anything else -> OTH.
+Acceptance: every X event posted to the WMS has one of the four codes.
+</pasted_content>

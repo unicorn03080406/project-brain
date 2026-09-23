@@ -227,8 +227,9 @@ t_hookstart() {
   out2=$(hk session-start 99999999aaaa startup)
   check "a second session sees the first as live" 'printf "%s" "$out2" | grep -q "^- s:abcdef12 · goal not set"'
   check "a session does not list itself" '! printf "%s" "$out2" | grep -q "^- s:99999999"'
-  touch -t 202001010000 .brain/sessions/abcdef12.seen
+  touch -t 202001010000 .brain/sessions/abcdef12.seen .brain/sessions/abcdef12.md
   check "sessions idle for over 24 h are not listed" '! hk session-start 77777777 startup | grep -q "s:abcdef12"'
+  echo hi > q1.txt; hp abcdef1234567 q1.txt >/dev/null
   hk session-end abcdef1234567 other >/dev/null
   check "session end marks the file ended" 'grep -q "^status: ended " .brain/sessions/abcdef12.md'
   check "resume makes it live again" 'hk session-start abcdef1234567 resume >/dev/null; grep -q "^status: live" .brain/sessions/abcdef12.md && grep -q "(resume)" .brain/sessions/abcdef12.md'
@@ -284,8 +285,171 @@ t_hooksjson() {
   check "no probe hook left active" '! grep -q probe "$j"'
 }
 
+# --- M3: capture, redaction, digest, attachments ------------------------------------------------
+hp() {   # hp <session> <prompt file> [scratchpad] [transcript]: run the prompt hook
+  LC_ALL=C awk -v sid="$1" -v cwd="$(pwd)" -v sp="${3:-}" -v tp="${4:-}" '
+    function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\t/, "\\t", s); return s }
+    { body = body (NR > 1 ? "\\n" : "") esc($0) }
+    END { printf "{\"session_id\":\"%s\",\"transcript_path\":\"%s\",\"cwd\":\"%s\",\"scratchpad_dir\":\"%s\",\"prompt_id\":\"p-%s\",\"hook_event_name\":\"UserPromptSubmit\",\"prompt\":\"%s\"}", sid, tp, cwd, sp, NR, body }' "$2" |
+    ${PB_SH:-sh} "$H" prompt
+}
+hs() {   # hs <session> <transcript> [scratchpad]: run the Stop hook and wait for its background work
+  printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","scratchpad_dir":"%s","hook_event_name":"Stop"}' "$1" "$2" "$(pwd)" "${3:-}" |
+    ${PB_SH:-sh} "$H" stop
+  i=0; while [ $i -lt 40 ]; do sleep 0.1; [ -s ".brain/sessions/$(printf %s "$1" | cut -c1-8).pending" ] && break; i=$((i+1)); done
+}
+DT="$ROOT/tests/detector"
+
+t_detector() {
+  total=0; right=0; wrong=""
+  for d in context plain; do
+    for f in "$DT/$d"/*.txt; do
+      total=$((total + 1)); r=$(LC_ALL=C awk -f "$ROOT/scripts/detect.awk" < "$f")
+      if [ "${r%% *}" = "$d" ]; then right=$((right + 1)); else wrong="$wrong $d/$(basename "$f")"; fi
+    done
+  done
+  echo "        detector: $right of $total right${wrong:+; wrong:$wrong}"
+  check "at least 20 samples of each kind" '[ "$(ls "$DT/context" | wc -l)" -ge 20 ] && [ "$(ls "$DT/plain" | wc -l)" -ge 20 ]'
+  check "every sample classified correctly" '[ "$right" = "$total" ]'
+  check "an empty prompt is plain" '[ "$(printf "" | awk -f "$ROOT/scripts/detect.awk")" = "plain short" ]'
+}
+
+t_redact() {
+  cat > s.txt <<'EOF'
+- password: Tr0ub4dor&3xample
+- API key: sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c
+aws AKIAIOSFODNN7EXAMPLE and ghp_abcdefghijklmnopqrstuvwxyz0123456789
+Authorization: Bearer abc.def-ghi_jkl.mno123456789
+db: postgres://svc:hunter2pass@db.internal:5432/app
+slack xoxb-123456789012-abcdefghijk
+-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA
+-----END RSA PRIVATE KEY-----
+The go-live is on 2026-10-15 and the token budget is fine.
+EOF
+  sh "$ROOT/scripts/redact.sh" rep.txt < s.txt > out.txt
+  for s in Tr0ub4dor sk-live-4f9a AKIAIOSFODNN7 ghp_abcdef abc.def-ghi hunter2pass xoxb-1234 MIIEowIBAAKCAQEA; do
+    check "removed: $s" '! grep -q "$s" out.txt'
+  done
+  check "normal text untouched" 'grep -qx "The go-live is on 2026-10-15 and the token budget is fine." out.txt'
+  check "report lists the kinds" 'grep -q "^aws-key 1" rep.txt && grep -q "^private-key 1" rep.txt'
+  check "clean text gives an empty report" 'echo "nothing secret here" | sh "$ROOT/scripts/redact.sh" rep2.txt >/dev/null && [ ! -s rep2.txt ]'
+}
+
+t_capture() {
+  b scaffold . --name Cap --mode private >/dev/null
+  hk session-start aaaaaaaa1111 startup >/dev/null
+  out=$(hp aaaaaaaa1111 "$DT/context/zoom-transcript.txt")
+  f=$(ls .brain/sources/inbox/*-aaaaaaaa.md 2>/dev/null | head -n 1)
+  check "pasted transcript saved to the inbox" '[ -n "$f" ]'
+  check "saved copy has the metadata" 'grep -q "^detected: transcript" "$f" && grep -q "^session: aaaaaaaa" "$f" && grep -q "^prompt_id: p-" "$f"'
+  body() { awk 'NR == 1 && /^---$/ { f = 1; next } f && /^---$/ { f = 0; next } !f' "$1"; }
+  check "saved text is verbatim" '[ "$(body "$f" | cksum)" = "$(cksum < "$DT/context/zoom-transcript.txt")" ]'
+  check "hook tells the session what it saved" 'printf "%s" "$out" | grep -q "Saved the pasted transcript verbatim to .brain/sources/inbox/"'
+  check "output is one line of JSON for UserPromptSubmit" '[ "$(printf "%s\n" "$out" | wc -l | tr -d " ")" = 1 ] && printf "%s" "$out" | grep -q "^{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\".*\"}}\$"'
+  check "a capture log entry is written" 'grep -q "· s:aaaaaaaa · capture · inbox" .brain/log/$(date +%Y-%m-%d).md'
+  n=$(ls .brain/sources/inbox | wc -l)
+  check "code is not captured, and nothing is said" '[ -z "$(hp aaaaaaaa1111 "$DT/plain/python-trace.txt")" ] && [ "$(ls .brain/sources/inbox | wc -l)" = "$n" ]'
+  check "a short instruction is not captured" '[ -z "$(hp aaaaaaaa1111 "$DT/plain/instructions-short.txt")" ]'
+  out=$(hp aaaaaaaa1111 "$DT/context/with-secret.txt")
+  g=$(ls -t .brain/sources/inbox/*.md | head -n 1)
+  check "secrets removed from the saved copy" '! grep -q "Tr0ub4dor" "$g" && ! grep -q "sk-live-4f9a" "$g" && grep -q "REDACTED" "$g"'
+  check "the session is told credentials were removed" 'printf "%s" "$out" | grep -q "credentials removed"'
+  check "prompts are counted in the session file" 'grep -q "^prompts: 4" .brain/sessions/aaaaaaaa.md'
+  check "map-check passes after captures" 'b claude-block >/dev/null && b map-check'
+  check "no brain: prompt hook is silent" 'mkdir -p "$W/nobrain" && (cd "$W/nobrain" && [ -z "$(hp x1 "$DT/context/zoom-transcript.txt")" ] && [ -z "$(ls -A)" ])'
+}
+
+t_digest() {
+  b scaffold . --name Dig --mode private >/dev/null
+  hk session-start aaaaaaaa startup >/dev/null; hk session-start bbbbbbbb startup >/dev/null
+  echo x > q.txt
+  check "nothing new: no output" '[ -z "$(hp bbbbbbbb q.txt)" ]'
+  echo "Priya confirmed weekend rota" | b log --type decision --session aaaaaaaa >/dev/null
+  echo "my own note" | b log --type status --session bbbbbbbb >/dev/null
+  echo "old meeting" | b log --type meeting --date 2026-01-02 --session aaaaaaaa >/dev/null
+  out=$(hp bbbbbbbb q.txt)
+  check "digest shows the other session's entry" 'printf "%s" "$out" | grep -q "s:aaaaaaaa decision: Priya confirmed weekend rota \[log/"'
+  check "digest leaves out the session's own entries" '! printf "%s" "$out" | grep -q "my own note"'
+  check "backfilled entries are only counted" 'printf "%s" "$out" | grep -q "+1 backfilled"'
+  check "the same entries are not shown twice" '[ -z "$(hp bbbbbbbb q.txt)" ]'
+  i=0; while [ $i -lt 9 ]; do echo "step $i" | b log --type status --session aaaaaaaa >/dev/null; i=$((i+1)); done
+  out=$(hp bbbbbbbb q.txt)
+  check "long digests keep the newest 6" 'printf "%s" "$out" | grep -q "+3 earlier entries" && printf "%s" "$out" | grep -q "step 8" && ! printf "%s" "$out" | grep -q "step 2 "'
+  mkdir -p .brain/log && echo "structure note" | b log --type structure --session aaaaaaaa >/dev/null
+  check "structure changes show up in the digest" 'hp bbbbbbbb q.txt | grep -q "s:aaaaaaaa structure: structure note"'
+}
+
+t_images() {
+  b scaffold . --name Img --mode private >/dev/null
+  sp="$W/images/sess1/scratchpad"; mkdir -p "$sp" "$W/images/sess1/images"
+  printf 'old' > "$W/images/sess1/images/1.png"
+  printf '{"session_id":"img11111","cwd":"%s","scratchpad_dir":"%s","source":"resume"}' "$(pwd)" "$sp" | sh "$H" session-start >/dev/null
+  echo "probe 2" > q.txt
+  check "images present before the session registered are not captured" '[ -z "$(hp img11111 q.txt "$sp")" ]'
+  printf '\211PNG fake' > "$W/images/sess1/images/2.png"
+  out=$(hp img11111 q.txt "$sp")
+  check "a newly pasted image is copied to the inbox" 'ls .brain/sources/inbox/*-img11111-img-2.png >/dev/null 2>&1'
+  check "the copy is byte-identical" 'cmp -s "$W/images/sess1/images/2.png" .brain/sources/inbox/*-img11111-img-2.png'
+  check "the session is told" 'printf "%s" "$out" | grep -q "Saved the pasted image(s)"'
+  check "the same image is not copied twice" '[ -z "$(hp img11111 q.txt "$sp")" ] && [ "$(ls .brain/sources/inbox | grep -c img-2.png)" = 1 ]'
+  cp "$W/images/sess1/images/2.png" "$W/images/sess1/images/3.png"
+  check "an identical image pasted again is not stored twice" 'hp img11111 q.txt "$sp" | grep -q "already in the brain, not saved again" && [ -z "$(ls .brain/sources/inbox | grep img-3.png)" ]'
+}
+
+t_attach() {
+  b scaffold . --name Att --mode private >/dev/null
+  printf '%%PDF-1.4 fake pdf bytes \001\002\003 end' > memo.pdf
+  b64=$(base64 < memo.pdf | tr -d '\n')
+  tp="$W/attach.jsonl"
+  echo '{"type":"summary","x":1}' > "$tp"
+  printf '{"type":"user","message":{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"%s"},"title":"probe memo.pdf"},{"type":"document","source":{"type":"text","media_type":"text/plain","data":"line one\\nsecret: hunter2\\n"},"title":"notes.txt"},{"type":"text","text":"probe 3"}]},"origin":{"kind":"human"}}\n' "$b64" > line.json
+  printf '{"session_id":"att11111","cwd":"%s","transcript_path":"%s","source":"startup"}' "$(pwd)" "$tp" | sh "$H" session-start >/dev/null
+  cat line.json >> "$tp"
+  printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n' >> "$tp"
+  hs att11111 "$tp"
+  pdf=$(ls .brain/sources/inbox/*-att11111-probe-memo.pdf 2>/dev/null | head -n 1)
+  check "PDF from the transcript saved under its own name" '[ -n "$pdf" ]'
+  check "PDF bytes identical to the original" 'cmp -s memo.pdf "$pdf"'
+  check "text attachment saved, with secrets removed" 'txt=$(ls .brain/sources/inbox/*-notes.txt) && grep -q "line one" "$txt" && ! grep -q hunter2 "$txt"'
+  check "the next prompt is told about them" 'echo hi > q.txt; hp att11111 q.txt | grep -q "Attachments from your previous message: saved: .brain/sources/inbox/"'
+  check "the notice is given only once" '[ -z "$(hp att11111 q.txt)" ]'
+  n=$(ls .brain/sources/inbox | wc -l)
+  hs att11111 "$tp"; sleep 0.5
+  check "a second Stop does not save them again" '[ "$(ls .brain/sources/inbox | wc -l)" = "$n" ]'
+  check "attachments in lines before registration are ignored" 'printf "{\"session_id\":\"att22222\",\"cwd\":\"%s\",\"transcript_path\":\"%s\",\"source\":\"resume\"}" "$(pwd)" "$tp" | sh "$H" session-start >/dev/null; hs att22222 "$tp"; sleep 0.5; [ -z "$(ls .brain/sources/inbox | grep att22222)" ]'
+  cat line.json >> "$tp"; hs att11111 "$tp"
+  check "the same file attached again is not stored twice" '[ "$(ls .brain/sources/inbox | grep -c probe-memo.pdf)" = 1 ]'
+  check "the session is told where the existing copy is" 'hp att11111 q.txt | grep -q "already in the brain, not saved again: .brain/sources/inbox/.*probe-memo.pdf"'
+  check "tool results (not typed by a person) are ignored" 'printf "{\"type\":\"user\",\"message\":{\"content\":[{\"tool_use_id\":\"t1\",\"type\":\"tool_result\",\"content\":[{\"type\":\"document\",\"source\":{\"type\":\"text\",\"media_type\":\"text/plain\",\"data\":\"tool\"},\"title\":\"tool.txt\"}]}]}}\n" >> "$tp"; hs att22222 "$tp"; sleep 0.5; [ -z "$(ls .brain/sources/inbox | grep tool.txt)" ]'
+}
+
+t_phantom() {
+  b scaffold . --name Ph --mode private >/dev/null
+  hk session-start ghost123 startup >/dev/null; hk session-end ghost123 other >/dev/null
+  check "a session with no prompt leaves no files" '[ -z "$(ls .brain/sessions | grep ghost123)" ]'
+  hk session-start real1234 startup >/dev/null; echo hi > q.txt; hp real1234 q.txt >/dev/null; hk session-end real1234 other >/dev/null
+  check "a session with a prompt is kept and marked ended" 'grep -q "^status: ended" .brain/sessions/real1234.md'
+}
+
+t_promptspeed() {
+  sh "$ROOT/tests/fixtures/make-adopt-ws.sh" ws >/dev/null; cd ws
+  b scaffold . --name NW --mode private --adopt >/dev/null
+  hk session-start sp111111 startup >/dev/null; hk session-start sp222222 startup >/dev/null
+  echo "what next?" > q.txt
+  t0=$(ms); i=0; while [ $i -lt 10 ]; do hp sp111111 q.txt >/dev/null; i=$((i+1)); done; t1=$(ms)
+  a=$(( (t1 - t0) / 10 )); echo "        prompt hook, plain prompt: ${a} ms"
+  check "plain prompt under 200 ms" '[ "$a" -lt 200 ]'
+  t0=$(ms); i=0; while [ $i -lt 10 ]; do echo "entry $i" | b log --type status --session sp222222 >/dev/null; hp sp111111 "$DT/context/meeting-notes.txt" >/dev/null; i=$((i+1)); done; t1=$(ms)
+  # subtract the time of the log calls, measured separately
+  l0=$(ms); i=0; while [ $i -lt 10 ]; do echo "entry $i" | b log --type status --session sp222222 >/dev/null; i=$((i+1)); done; l1=$(ms)
+  a=$(( (t1 - t0 - (l1 - l0)) / 10 )); echo "        prompt hook, capture + digest: ${a} ms"
+  check "capture and digest under 200 ms" '[ "$a" -lt 200 ]'
+}
+
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
-         hookquiet hookstart hookbudget hookdrift hookspeed hooksjson; do run "$t"; done
+         hookquiet hookstart hookbudget hookdrift hookspeed hooksjson \
+         detector redact capture digest images attach phantom promptspeed; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo

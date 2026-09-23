@@ -1,0 +1,6 @@
+the client's reply
+
+<pasted_content id="t1">
+Hi Dana, thanks. Go-live stays 15 October. If security hasn't issued prod credentials by
+9 October, we slip to 22 October and I'll tell the carrier. Priya
+</pasted_content>

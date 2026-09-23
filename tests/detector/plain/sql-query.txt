@@ -1,0 +1,9 @@
+
+
+<pasted_content id="t1">
+SELECT s.shipment_id, s.status, e.reason, e.raised_at
+FROM shipments s
+JOIN exceptions e ON e.shipment_id = s.shipment_id
+WHERE e.raised_at >= now() - interval '24 hours'
+ORDER BY e.reason, e.raised_at;
+</pasted_content>

@@ -1,0 +1,8 @@
+
+
+<pasted_content id="t1">
+Exception in thread "main" java.lang.NullPointerException: Cannot invoke "String.length()" because "reason" is null
+	at com.northwind.wms.ReasonMapper.map(ReasonMapper.java:27)
+	at com.northwind.wms.StatusPoster.post(StatusPoster.java:64)
+	at com.northwind.wms.Main.main(Main.java:15)
+</pasted_content>

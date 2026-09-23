@@ -1,0 +1,12 @@
+
+
+<pasted_content id="t1">
+[10:02] Imani Okafor
+Can we move Thursday's check-in to 11:00? Board prep overlaps.
+[10:04] Tomas Reyes
+Fine by me. Also S31 went offline last night, battery.
+[10:05] Imani Okafor
+OK. Let's note S31 as degraded from 22 Sep until it's replaced.
+[10:07] Tomas Reyes
+Will do. Replacement ships Monday.
+</pasted_content>

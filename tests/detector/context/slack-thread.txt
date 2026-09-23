@@ -1,0 +1,12 @@
+slack thread from #pebble-dev
+
+<pasted_content id="t1">
+Kofi Mensah  9:41 AM
+FreshLeaf sent sandbox keys, they're in 1Password under "FreshLeaf sandbox"
+Lena Brandt  9:43 AM
+great. reminder the investor demo is locked for Nov 26, no slipping
+Kofi Mensah  9:44 AM
+:+1: we should freeze features Nov 13 then
+Sara Lind  9:52 AM
+planner screens v2 are in Figma, pantry flow tomorrow
+</pasted_content>

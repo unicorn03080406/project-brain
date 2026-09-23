@@ -1,0 +1,11 @@
+
+
+<pasted_content id="t1">
+Kickoff, Pebble Pantry, 19 Sep
+- Lena: investor demo 26 Nov; beta must be installable by then
+- Kofi: reviews within 24h on weekdays; main is protected
+- Sara: first Figma screens by 30 Sep
+- Terms: plan = one week of meals, pantry = what the household has, staple = always in stock
+- Risk: FreshLeaf feed format not final
+- Next check-in: Friday 25 Sep, 30 min
+</pasted_content>

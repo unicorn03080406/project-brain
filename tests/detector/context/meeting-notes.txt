@@ -1,0 +1,18 @@
+meeting notes
+
+<pasted_content id="t1">
+Weekly sync 2026-09-24
+
+Attendees: Lena, Kofi, Sara, me
+
+Decisions
+- Pantry items are per household, not per user (Lena)
+- Use Expo push notifications, not OneSignal
+
+Action items
+- Kofi: set up the TestFlight group by Oct 2
+- Sara: pantry flow screens by Sep 30
+- me: household model + migration
+
+Next sync: Oct 1
+</pasted_content>

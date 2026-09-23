@@ -1,0 +1,9 @@
+decision log from the workshop
+
+<pasted_content id="t1">
+Workshop 2026-09-25, decisions:
+1. We keep the carrier's REST API; SFTP batch stays as a fallback only. (Priya, Luis)
+2. Alerts go to #freight-alerts and to the ops-weekend pager on weekends. (Priya)
+3. The exceptions report ships two weeks after go-live, not with it. (Priya)
+4. Dana owns the runbook; Luis reviews it. (all)
+</pasted_content>

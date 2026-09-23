@@ -1,0 +1,11 @@
+
+
+<pasted_content id="t1">
+.PHONY: test lint run
+test:
+	pytest -q
+lint:
+	ruff check .
+run:
+	python sync.py --once
+</pasted_content>

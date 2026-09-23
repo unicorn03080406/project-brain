@@ -1,0 +1,14 @@
+review this diff
+
+<pasted_content id="t1">
+diff --git a/carrier-sync/mapping.py b/carrier-sync/mapping.py
+index 3f2a1b0..8c9d4e2 100644
+--- a/carrier-sync/mapping.py
++++ b/carrier-sync/mapping.py
+@@ -1,2 +1,6 @@
++from statuses import IN_TRANSIT, DELIVERED, EXCEPTION
++CODES = {"in_transit": IN_TRANSIT, "delivered": DELIVERED, "exception": EXCEPTION}
+ def map_event(e):
+-    return {"id": e["shipment_id"], "status": e["status"]}
++    return {"id": e["shipment_id"], "status": CODES[e["status"]]}
+</pasted_content>

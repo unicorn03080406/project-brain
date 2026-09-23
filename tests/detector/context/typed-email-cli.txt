@@ -1,0 +1,8 @@
+From: Kofi Mensah <kofi@pebblepantry.example>
+To: contractor@example.com
+Subject: Household model
+
+We confirmed with Lena: pantry items belong to the household. Each user can belong to one
+household for the MVP. Invites by email link.
+
+Kofi

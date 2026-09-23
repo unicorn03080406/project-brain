@@ -1,0 +1,4 @@
+Refactor carrier-sync so that retry() really retries with exponential backoff, up to 3 attempts,
+only on 503 and timeouts. Then add a unit test for each case: success first time, success on the
+third attempt, and giving up. Keep the public function names the same. After that, run pytest and
+fix anything that breaks. Don't touch wms-adapter in this change.

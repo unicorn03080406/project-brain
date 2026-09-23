@@ -1,0 +1,15 @@
+
+
+<pasted_content id="t1">
+{
+  "shipment_id": "RR-20260923-0042",
+  "status": "exception",
+  "reason": "damaged",
+  "location": {"lat": 52.37, "lon": 4.89},
+  "timestamp": "2026-09-23T08:12:00Z",
+  "events": [
+    {"code": "PU", "at": "2026-09-22T14:00:00Z"},
+    {"code": "IT", "at": "2026-09-23T02:10:00Z"}
+  ]
+}
+</pasted_content>

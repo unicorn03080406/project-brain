@@ -1,0 +1,11 @@
+
+
+<pasted_content id="t1">
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I"]
+</pasted_content>

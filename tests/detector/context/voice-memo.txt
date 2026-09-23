@@ -1,0 +1,9 @@
+voice memo transcript
+
+<pasted_content id="t1">
+Okay, note to self after the call with Kofi. They want the recipe import to run nightly, not on
+demand. FreshLeaf rate limits us to a thousand calls an hour, so we batch. Kofi also mentioned
+Lena might want a web app after the demo, but that's out of scope for now, he just wants us to
+keep the API clean enough that a web client is possible later. Follow up on hosting: they lean
+towards Fly.io but haven't decided.
+</pasted_content>

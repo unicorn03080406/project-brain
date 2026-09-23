@@ -1,0 +1,11 @@
+
+
+<pasted_content id="t1">
+Handover notes from Marta (previous contractor), 2026-09-01
+
+- The staging WMS resets every Sunday night; don't store test data you need.
+- Luis prefers requests by email, not chat, for anything involving credentials.
+- The carrier API sometimes returns 200 with an empty body during their maintenance
+  window (Tue 02:00-03:00 UTC). Treat it as "no events", not an error.
+- Priya decides scope; Luis decides anything touching the WMS.
+</pasted_content>

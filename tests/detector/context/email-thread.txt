@@ -1,0 +1,11 @@
+fwd from the client
+
+<pasted_content id="t1">
+Hi all, confirming we accept D1 as delivered. Invoice can go out.
+Imani
+
+On Fri, Oct 23, 2026 at 5:10 PM Contractor <contractor@example.com> wrote:
+> Hi Imani, attached is D1: the data audit and cleaning notes.
+> Summary: 38 sensors usable, 2 excluded (S17, S22), 4% of readings flagged.
+> Let me know if you want a walkthrough.
+</pasted_content>

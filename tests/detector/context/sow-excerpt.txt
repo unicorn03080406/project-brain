@@ -1,0 +1,11 @@
+
+
+<pasted_content id="t1">
+4. Deliverables and acceptance
+4.1 The Contractor shall deliver D1 (data audit and cleaning notes) no later than 24 October 2026.
+4.2 The Institute shall accept or reject each deliverable in writing within ten (10) business days.
+4.3 Silence after ten business days counts as acceptance.
+5. Payment
+5.1 Fees are payable in three instalments of 30%, 30% and 40% on acceptance of D1, D2 and D3.
+5.2 Invoices are payable within thirty (30) days.
+</pasted_content>

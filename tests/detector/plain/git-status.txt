@@ -1,0 +1,15 @@
+what does this output mean
+
+<pasted_content id="t1">
+On branch main
+Your branch is ahead of 'origin/main' by 2 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+	modified:   carrier-sync/sync.py
+	modified:   carrier-sync/mapping.py
+
+Untracked files:
+	carrier-sync/statuses.py
+</pasted_content>

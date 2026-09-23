@@ -1,0 +1,8 @@
+
+
+<pasted_content id="t1">
+TypeError: Cannot read properties of undefined (reading 'items')
+    at buildShoppingList (/app/src/list.ts:48:22)
+    at async PlannerScreen.onGenerate (/app/src/screens/Planner.tsx:112:5)
+    at async processTicksAndRejections (node:internal/process/task_queues:95:5)
+</pasted_content>

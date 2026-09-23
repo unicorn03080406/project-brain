@@ -1,0 +1,11 @@
+
+
+<pasted_content id="t1">
+src/list.ts:48:22 - error TS2532: Object is possibly 'undefined'.
+
+48   const items = plan.meals.items.flatMap((m) => m.ingredients);
+                        ~~~~~~~~~~~~~~~~
+src/screens/Planner.tsx:112:5 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+Found 2 errors in 2 files.
+</pasted_content>

@@ -1,0 +1,14 @@
+
+
+<pasted_content id="t1">
+services:
+  carrier-sync:
+    image: northwind/carrier-sync:0.3.1
+    environment:
+      CARRIER_API_URL: https://api.roadrunner.example/v2
+      WMS_URL: https://wms-staging.northwind.example
+      POLL_SECONDS: "300"
+    restart: unless-stopped
+  wms-adapter:
+    build: ./wms-adapter
+</pasted_content>

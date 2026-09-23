@@ -105,3 +105,26 @@ Use the brains from the M1 tests (`~/pb-test/northwind`, `~/pb-test/research`).
 - [ ] Open a folder with no `.brain/` (any other project): nothing about the project brain
       appears, and nothing is created there.
 - [ ] Windows: the same first two checks in a Claude Code session on Windows with Git Bash.
+
+## M3. Capture and spread
+
+Use `~/pb-test/research`. Keep two chats open side by side: **A** and **B**.
+
+- [ ] In A, paste project notes (for example the text of `tests/detector/context/teams-chat.txt`,
+      which belongs to the research project; product notes would rightly go to not-context)
+      with a one-line request. Before or with its answer, A says the notes were saved; afterwards
+      they sit in a `sources/` subfolder, with a line in `sources/INDEX.md`, a log entry, and the
+      decisions in decisions.md.
+- [ ] In B, send any short prompt ("what's new?"). B's answer mentions what A added (the digest),
+      with log paths.
+- [ ] Send B the same prompt again: nothing is repeated.
+- [ ] In A, paste a stack trace or a code block: nothing is saved, nothing is said about it.
+- [ ] In A, paste a screenshot with a short line: the image is copied to `sources/inbox/` (then filed).
+- [ ] In A, attach `~/pb-test/probe-memo.pdf`: after A's reply the PDF is in `sources/inbox/`; on
+      A's next prompt, A is told and files it (with a `<file>.md` note).
+- [ ] Attach the same PDF again: no second copy; A is told where the existing one is.
+- [ ] Paste notes containing `password: hunter2`: the saved copy says `[REDACTED: secret]` and the
+      session tells you credentials were removed.
+- [ ] Close a chat that never got a prompt: no file for it stays in `.brain/sessions/`.
+- [ ] In a folder with no `.brain/`, paste meeting notes: nothing is saved anywhere.
+- [ ] Windows: the first two checks in a Claude Code session on Windows with Git Bash.

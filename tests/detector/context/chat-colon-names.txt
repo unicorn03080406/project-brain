@@ -1,0 +1,9 @@
+here is what Lena said in the investor prep
+
+<pasted_content id="t1">
+Lena: the demo flow is onboarding, plan a week, generate the list, tick items off
+Kofi: we can fake the FreshLeaf feed if their prod keys are late
+Lena: no fakes in front of investors, use the sandbox and say so
+Kofi: ok, sandbox it is
+Lena: and the app must be on real phones, TestFlight, not the simulator
+</pasted_content>

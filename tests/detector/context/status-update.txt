@@ -1,0 +1,16 @@
+status update I sent the client
+
+<pasted_content id="t1">
+Hi Priya,
+
+Quick status for this week:
+
+Done: the sync loop now runs end to end in staging; EXCEPTION maps to X and raises an alert.
+In progress: retry on WMS 503 (in review), on-call runbook draft.
+Risks: prod credentials ticket is still open with security; if it is not closed by Oct 9,
+go-live on Oct 15 is at risk.
+
+Next week: load test with 2x peak volume, runbook review with Luis.
+
+Dana
+</pasted_content>

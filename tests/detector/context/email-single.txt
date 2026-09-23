@@ -1,0 +1,17 @@
+
+
+<pasted_content id="t1">
+From: Priya Nair <priya@northwind.example>
+To: Dana Kim <dana@example.com>
+Cc: Luis Ortega <luis@northwind.example>
+Date: Tue, 22 Sep 2026 16:20:00 +0000
+Subject: Weekend alert coverage
+
+Hi Dana,
+
+We'll cover weekend alerts with the ops rota: Saturday is Marco, Sunday is Aiko.
+Please route #freight-alerts to the ops-weekend pager group from go-live.
+
+Thanks,
+Priya
+</pasted_content>
