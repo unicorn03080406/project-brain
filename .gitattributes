@@ -1,0 +1,5 @@
+# Scripts must keep LF endings, or bash breaks on Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary

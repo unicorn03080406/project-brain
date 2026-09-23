@@ -1,0 +1,16 @@
+From: Kofi Mensah <kofi@pebblepantry.example>
+To: contractor@example.com
+Date: Mon, 21 Sep 2026 09:14:00 +0200
+Subject: Re: Pebble Pantry MVP - kickoff follow-up
+
+Hi,
+
+Following up on the kickoff. Two decisions from our side:
+1. We go with Expo for the React Native app, not bare RN. Faster builds for the beta.
+2. Recipe feed partner is FreshLeaf. Their API docs are in the shared folder. Sandbox keys will come from their team next week.
+
+Open question on your side: do we store pantry items per household or per user? Lena prefers per household.
+
+Repo: github.com/pebble-pantry/app (you have write access as of today).
+
+Kofi

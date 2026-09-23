@@ -1,0 +1,8 @@
+[2026-09-18 10:02] Imani Okafor: Thanks for joining. Quick context: the board wants a recommendation before the budget vote.
+[2026-09-18 10:03] Imani Okafor: Tomas runs the sensor network, he'll give you access to the exports.
+[2026-09-18 10:04] Tomas Reyes: The exports are 10-minute readings. Sensors S01 to S40. We lost S17 and S22 in the March storm.
+[2026-09-18 10:06] Contractor: What counts as "accurate enough" for the board?
+[2026-09-18 10:07] Imani Okafor: Within 2 cm of the reference gauge 95% of the time. That's the threshold we agreed internally.
+[2026-09-18 10:09] Tomas Reyes: Watch out for biofouling in summer. Readings drift up after about six weeks without cleaning.
+[2026-09-18 10:11] Imani Okafor: Decision: we exclude S17 and S22 from the study entirely.
+[2026-09-18 10:12] Imani Okafor: Weekly check-in on Thursdays at 10:00, 20 minutes.
