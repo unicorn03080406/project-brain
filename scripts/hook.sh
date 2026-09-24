@@ -3,59 +3,84 @@
 # Events: session-start, session-end, prompt (UserPromptSubmit), stop.
 # Rules: with no .brain/ in the project, print nothing and exit 0. On any error, exit 0 and
 # print nothing: a hook must never block or clutter the session. Errors go to a log file.
-PB_ROOT=$(CDPATH= cd -- "$(dirname -- "$(printf '%s' "$0" | tr '\\' '/')")/.." 2>/dev/null && pwd)   # Windows passes C:\...; Git Bash wants C:/...
+#
+# Speed matters: this runs on every prompt in every project. Starting a program costs ~1 ms on
+# macOS/Linux but 15-30 ms in Git Bash on Windows, so the common paths use shell built-ins and
+# at most one or two awk runs. Keep it that way.
+
+# Fast exit, no programs started: is there a .brain/ at or above the project folder?
+d=${CLAUDE_PROJECT_DIR:-}
+if [ -n "$d" ]; then
+  case "$d" in *\\*) d=$(printf '%s' "$d" | tr '\\' '/') ;; esac
+  PB_FAST=""
+  while [ -n "$d" ]; do
+    if [ -f "$d/.brain/MAP.md" ]; then PB_FAST="$d/.brain"; break; fi
+    case "$d" in */*) d=${d%/*} ;; *) break ;; esac
+  done
+  [ -n "$PB_FAST" ] || exit 0
+fi
+
+p=$0; case "$p" in *\\*) p=$(printf '%s' "$p" | tr '\\' '/') ;; esac   # Windows passes C:\...
+case "$p" in
+  */scripts/hook.sh) PB_ROOT=${p%/scripts/hook.sh} ;;
+  scripts/hook.sh) PB_ROOT=. ;;
+  */*) PB_ROOT=${p%/*}/.. ;;
+  *) PB_ROOT=.. ;;
+esac
 . "$PB_ROOT/scripts/lib.sh" || exit 0
 EVENT=${1:-}
 PB_MAX_START=8000   # characters injected at session start (~2k tokens)
 PB_DIGEST_MAX=6     # log entries shown per prompt before "+N more"
+PB_CAPTURE_MIN=120  # shorter prompts are never checked for capture
+T=${TMPDIR:-/tmp}; T=${T%/}
+PF="$T/pb-prompt.$$"; OUT="$T/pb-out.$$"
+trap '[ -e "$PF" ] && rm -f "$PF"; [ -e "$OUT" ] && rm -f "$OUT"' EXIT   # rm only if there is something to remove
 
-errlog() {   # keep hook errors out of the session; one log per plugin install
-  d=${CLAUDE_PLUGIN_DATA:-${TMPDIR:-/tmp}}
-  mkdir -p "$d" 2>/dev/null && cat >> "$d/project-brain-errors.log" 2>/dev/null
-}
-
-# Read the hook's JSON input and pull out the fields we use, in one awk pass. The prompt goes
-# to a file, never through a shell variable (it can be large and contain anything).
+# Read the hook's JSON input in one awk run. The prompt goes to a file (only if it is long enough
+# to capture), never through a shell variable.
 read_input() {
-  TMPD=$(mktemp -d 2>/dev/null) || { TMPD="${TMPDIR:-/tmp}/pb.$$"; mkdir -p "$TMPD"; }
-  trap 'rm -rf "$TMPD"' EXIT
-  cat > "$TMPD/in.json"
-  eval "$(LC_ALL=C awk -v pf="$TMPD/prompt.txt" "$(cat "$PB_ROOT/scripts/json.awk")"'
-    function q(s) { gsub(/\047/, "\047\\\047\047", s); return "\047" s "\047" }
-    { all = all $0 "\n" }
-    END {
-      printf "SID=%s\nSRC=%s\nIN_CWD=%s\nTRANSCRIPT=%s\nPROMPT_ID=%s\nSCRATCH=%s\n",
-        q(jget(all, "session_id")), q(jget(all, "source")), q(jget(all, "cwd")),
-        q(jget(all, "transcript_path")), q(jget(all, "prompt_id")), q(jget(all, "scratchpad_dir"))
-      printf "%s", jget(all, "prompt") > pf
-    }' "$TMPD/in.json")"
+  eval "$(LC_ALL=C awk -v pf="$PF" -v min="$PB_CAPTURE_MIN" -f "$PB_ROOT/scripts/json.awk" -f "$PB_ROOT/scripts/hookin.awk")"
   SID=${SID:-${CLAUDE_CODE_SESSION_ID:-unknown}}
-  S8=$(printf '%s' "$SID" | cut -c1-8)
+  if [ ${#SID} -gt 8 ]; then S8=${SID%"${SID#????????}"}; else S8=$SID; fi
 }
 
 find_brain_or_exit() {
-  # The hook's own cwd follows the session's shell, so trust the project dir first.
-  BRAIN=$(PB_BRAIN= pb_find_brain "$(pb_path "${IN_CWD:-.}")" 2>/dev/null) || exit 0
+  if [ -n "${PB_FAST:-}" ]; then BRAIN=$PB_FAST
+  else BRAIN=$(PB_BRAIN= pb_find_brain "$(pb_path "${IN_CWD:-.}")" 2>/dev/null) || exit 0; fi
   MAP="$BRAIN/MAP.md"
-  PROJ=$(pb_project_of "$BRAIN")
+  PROJ=${BRAIN%/.brain}
+  SES="$BRAIN/sessions/$S8"
+}
+
+now() {   # one date call per run, only when needed: sets NOW (local, with offset) and EPOCH
+  [ -n "${NOW:-}" ] && return 0
+  set -- $(date '+%Y-%m-%dT%H:%M:%S%z %s'); NOW=$1; EPOCH=$2
+}
+scratch_images() {   # the folder where Claude Code keeps this session's pasted images
+  [ -n "$SCRATCH" ] || return 1
+  case "$SCRATCH" in *\\*|?:*) s=$(pb_path "$SCRATCH") ;; *) s=$SCRATCH ;; esac
+  IMGDIR="${s%/*}/images"
 }
 
 # --- Session registration -------------------------------------------------------------------
 
+new_session_file() {
+  now
+  [ -d "$BRAIN/sessions" ] || mkdir -p "$BRAIN/sessions"
+  sed -e "s|{{SID}}|$S8|g" -e "s|{{TS}}|$NOW|g" "$PB_ROOT/templates/core/session.md" > "$SES.md"
+  init_att
+}
+
 register_session() {
-  f="$BRAIN/sessions/$S8.md"
-  mkdir -p "$BRAIN/sessions"
-  if [ ! -f "$f" ]; then
-    sed -e "s|{{SID}}|$S8|g" -e "s|{{TS}}|$(pb_now)|g" "$PB_ROOT/templates/core/session.md" > "$f"
-  fi
+  [ -f "$SES.md" ] || new_session_file
+  now
   # Own file only: status and last start. Other sessions never write here.
-  awk -v now="$(pb_now)" -v src="$SRC" '
+  awk -v now="$NOW" -v src="$SRC" '
     /^status:/ && !s { print "status: live"; s = 1; next }
     /^last-start:/ { next }
     /^---$/ && ++dash == 2 { print "last-start: " now " (" src ")" }
-    { print }' "$f" | pb_replace "$f"
+    { print }' "$SES.md" > "$SES.md.tmp" && mv -f "$SES.md.tmp" "$SES.md"
   mark_seen
-  init_att
   # Later Bash calls in this session know who they are and where the brain is.
   if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
     { echo "export BRAIN_SESSION='$S8'"; echo "export PB_BRAIN='$BRAIN'"; } >> "$CLAUDE_ENV_FILE"
@@ -65,34 +90,33 @@ register_session() {
 # Attachments already present when a session registers (a resumed chat, a session that predates
 # the brain) are not new: remember them so only later ones are captured.
 init_att() {
-  att="$BRAIN/sessions/$S8.att"
-  [ -f "$att" ] && return 0
-  : > "$att"
-  if [ -n "$SCRATCH" ]; then
-    dir="$(dirname -- "$(pb_path "$SCRATCH")")/images"
-    for i in "$dir"/*; do [ -f "$i" ] && echo "img $(basename -- "$i")" >> "$att"; done
+  [ -f "$SES.att" ] && return 0
+  : > "$SES.att"
+  if scratch_images && [ -d "$IMGDIR" ]; then
+    for i in "$IMGDIR"/*; do [ -f "$i" ] && echo "img ${i##*/}" >> "$SES.att"; done
   fi
   t=$(pb_path "${TRANSCRIPT:-}")
-  [ -n "$t" ] && [ -f "$t" ] && echo "tlines $(wc -l < "$t" | tr -d ' ')" >> "$att"
+  [ -n "$t" ] && [ -f "$t" ] && echo "tlines $(wc -l < "$t" | tr -d ' ')" >> "$SES.att"
   return 0
 }
 
 # The marker: for every log file, how many lines this session has already been shown.
-# Kept in sessions/<id>.seen; its mtime lets the digest skip unchanged files with find -newer.
 mark_seen() {
-  s="$BRAIN/sessions/$S8.seen"
-  (cd "$BRAIN/log" 2>/dev/null && for l in *.md; do [ -f "$l" ] && printf '%s %s\n' "$l" "$(wc -l < "$l" | tr -d ' ')"; done) > "$s.tmp" 2>/dev/null
-  mv -f "$s.tmp" "$s"
+  set -- "$BRAIN"/log/*.md
+  if [ -f "$1" ]; then
+    awk '{ c[FILENAME]++ } END { for (f in c) { n = f; sub(/.*\//, "", n); print n, c[f] } }' "$@" > "$SES.seen"
+  else
+    : > "$SES.seen"
+  fi
 }
 
 end_session() {
-  f="$BRAIN/sessions/$S8.md"
-  [ -f "$f" ] || exit 0
+  [ -f "$SES.md" ] || exit 0
   # A chat that closed without a single prompt (VS Code opens and closes such sessions on its
   # own) leaves only an empty stub: remove it. It holds no knowledge.
-  if ! grep -q '^prompts: [1-9]' "$f" &&
-     [ -z "$(awk '/^## (Goal|Claims|Handoff)/ { s = 1; next } /^## / { s = 0 } s && NF' "$f")" ]; then
-    rm -f "$f" "$BRAIN/sessions/$S8.seen" "$BRAIN/sessions/$S8.att" "$BRAIN/sessions/$S8.pending"
+  if [ ! -s "$SES.prompts" ] &&
+     [ -z "$(awk '/^## (Goal|Claims|Handoff)/ { s = 1; next } /^## / { s = 0 } s && NF' "$SES.md")" ]; then
+    rm -f "$SES.md" "$SES.seen" "$SES.att" "$SES.pending" "$SES.prompts"
     exit 0
   fi
   # A closed chat cannot work on anything: release its claims so others can take them.
@@ -100,70 +124,77 @@ end_session() {
     n=$(BRAIN_SESSION=$S8 PB_BRAIN=$BRAIN sh "$PB_ROOT/scripts/brain.sh" release --all --session "$S8" 2>/dev/null | sed -n 's/^released: \([0-9]*\).*/\1/p')
     [ "${n:-0}" -gt 0 ] && log_entry status claims "Session closed: released $n claim(s)."
   fi
-  grep -q '^status: handed-off' "$f" && exit 0     # keep the handoff status
-  awk -v now="$(pb_now)" '
-    /^status:/ && !s { print "status: ended " now; s = 1; next }
-    { print }' "$f" | pb_replace "$f"
+  grep -q '^status: handed-off' "$SES.md" && exit 0     # keep the handoff status
+  now
+  awk -v now="$NOW" '/^status:/ && !s { print "status: ended " now; s = 1; next } { print }' "$SES.md" \
+    > "$SES.md.tmp" && mv -f "$SES.md.tmp" "$SES.md"
 }
 
 # --- Start summary --------------------------------------------------------------------------
 
-# NOW.md without the header, comments and empty sections; each section capped.
-now_summary() {
-  awk '
-    /^# / { next }
-    /^Edit one section|^Label facts/ { next }
+# MAP meta, NOW.md sections, expired claims and the inferred flag, in one awk run.
+now_and_meta() {
+  now
+  awk -v now_epoch="$EPOCH" -v metaf="$T/pb-meta.$$" '
+    FILENAME == ARGV[1] {
+      if (/^```brain-map/) { inb = 1; next }
+      if (inb && /^```/) { inb = 0; next }
+      if (inb && $0 !~ /\|/ && match($0, /^[a-z]+: /)) { k = substr($0, 1, RLENGTH - 2); meta[k] = substr($0, RLENGTH + 1) }
+      next
+    }
+    /^# / || /^Edit one section/ || /^Label facts/ { next }
     /<!--/ { inc = 1 } inc { if (/-->/) inc = 0; next }
-    /^## / { flush(); head = $0; n = 0; body = ""; next }
+    /^## / { flush(); head = $0; sec = substr($0, 4); n = 0; body = ""; next }
+    /inferred: reconstructed/ { inferred = 1 }
+    sec == "Claims" && match($0, /\(@[0-9]+\)[[:space:]]*$/) { if (substr($0, RSTART + 2, RLENGTH - 3) + 0 < now_epoch) expired++ }
     /^[[:space:]]*$/ { next }
     head != "" { n++; if (n <= 8) body = body $0 "\n"; else more++ }
     function flush() {
-      if (body != "") { printf "#%s\n%s", head, body; if (more) printf "(+%d more lines in .brain/NOW.md)\n", more }
+      if (body != "") { if (!shown++) printf "\n## From .brain/NOW.md\n"
+        printf "#%s\n%s", head, body; if (more) printf "(+%d more lines in .brain/NOW.md)\n", more }
       more = 0
     }
-    END { flush() }' "$BRAIN/NOW.md"
+    END {
+      flush()
+      printf "%s\n%s\n%s\n%s\n%s\n", meta["project"], meta["mode"], meta["format"], expired + 0, inferred + 0 > metaf
+    }' "$MAP" "$BRAIN/NOW.md"
 }
-
 
 today_tail() {
-  f="$BRAIN/log/$(pb_today).md"
+  now; f="$BRAIN/log/${NOW%%T*}.md"
   [ -f "$f" ] || return 0
-  awk '/^### / { if (h != "") print h (l != "" ? ": " l : ""); h = substr($0, 5); l = ""; next }
-       h != "" && l == "" && NF { l = substr($0, 1, 140) }
-       END { if (h != "") print h (l != "" ? ": " l : "") }' "$f" | tail -n 8 | sed 's/^/- /'
-}
-
-
-warnings() {
-  fmt=$(pb_map_meta "$MAP" format)
-  [ "$fmt" = "$PB_FORMAT" ] || {
-    if [ "${fmt:-0}" -lt "$PB_FORMAT" ] 2>/dev/null; then echo "- Brain format $fmt is older than the plugin's ($PB_FORMAT): run /project-brain:init to upgrade."
-    else echo "- Brain format $fmt is newer than this plugin ($PB_FORMAT): update the plugin; do not restructure the brain."; fi
-  }
-  n=$(sh "$PB_ROOT/scripts/brain.sh" map-check 2>/dev/null | grep -c '^ERROR' || true)
-  [ "${n:-0}" -gt 0 ] && echo "- MAP.md has $n problem(s): run sh \"$PB_ROOT/scripts/brain.sh\" map-check and fix them."
-  if [ "$(pb_map_meta "$MAP" mode)" = private ]; then
-    sh "$PB_ROOT/scripts/brain.sh" privacy-check 2>/dev/null | grep -v 'privacy: ok\|not in a git repo' | sed 's/^privacy: /- Privacy: /'
-  fi
-  now=$(pb_epoch)
-  x=$(awk -v now="$now" '/^## Claims/ { c = 1; next } /^## / { c = 0 } c && match($0, /\(@[0-9]+\)[[:space:]]*$/) { if (substr($0, RSTART + 2, RLENGTH - 3) + 0 < now) n++ } END { print n + 0 }' "$BRAIN/NOW.md")
-  [ "$x" -gt 0 ] && echo "- $x expired claim(s) in NOW.md: clear them with sh \"$PB_ROOT/scripts/brain.sh\" claims --expire."
-  grep -q 'inferred: reconstructed' "$BRAIN/NOW.md" 2>/dev/null && echo "- NOW.md is still marked inferred: ask the owner to confirm it when it fits."
-  return 0
+  awk -v day="${NOW%%T*}" '
+    /^### / { if (h != "") keep(); h = substr($0, 5); l = ""; next }
+    h != "" && l == "" && NF { l = substr($0, 1, 140) }
+    function keep() { r[++n] = "- " h (l != "" ? ": " l : "") }
+    END { if (h != "") keep(); if (!n) exit
+          printf "\n## Today in .brain/log/%s.md\n", day
+          for (i = (n > 8 ? n - 7 : 1); i <= n; i++) print r[i] }' "$f"
 }
 
 start_summary() {
-  name=$(pb_map_meta "$MAP" project)
+  now_and_meta > "$T/pb-now.$$"
+  { read -r name; read -r mode; read -r fmt; read -r expired; read -r inferred; } < "$T/pb-meta.$$"
   echo "# Project brain: ${name:-this project}"
-  echo "This project keeps a shared knowledge base in .brain/ (mode: $(pb_map_meta "$MAP" mode)). MAP.md says"
+  echo "This project keeps a shared knowledge base in .brain/ (mode: $mode). MAP.md says"
   echo "what lives where. Keep it current as you work, following the project-brain protocol skill."
   echo "You are session s:$S8. Log with: echo \"<text>\" | sh \"$PB_ROOT/scripts/brain.sh\" log --type <type> --session $S8"
   [ "$SRC" = compact ] && echo "(Context was just compacted: this is a fresh summary of the brain.)"
-  s=$(now_summary); [ -n "$s" ] && printf '\n## From .brain/NOW.md\n%s\n' "$s"
+  cat "$T/pb-now.$$"
   s=$(open_sessions); [ -n "$s" ] && printf '\n## Other live sessions (.brain/sessions/)\n%s\n' "$s"
-  s=$(today_tail); [ -n "$s" ] && printf '\n## Today in .brain/log/%s.md\n%s\n' "$(pb_today)" "$s"
+  today_tail
   s=$(repo_drift); [ -n "$s" ] && printf '\n## Repos changed since last seen (update Freshness in NOW.md after catching up)\n%s\n' "$s"
-  s=$(warnings); [ -n "$s" ] && printf '\n## Needs attention\n%s\n' "$s"
+  {
+    if [ "$fmt" != "$PB_FORMAT" ]; then
+      if [ "${fmt:-0}" -lt "$PB_FORMAT" ] 2>/dev/null; then echo "- Brain format $fmt is older than the plugin's ($PB_FORMAT): run /project-brain:init to upgrade."
+      else echo "- Brain format $fmt is newer than this plugin ($PB_FORMAT): update the plugin; do not restructure the brain."; fi
+    fi
+    [ "$mode" = private ] && sh "$PB_ROOT/scripts/brain.sh" privacy-check 2>/dev/null | grep -v 'privacy: ok\|not in a git repo' | sed 's/^privacy: /- Privacy: /'
+    [ "${expired:-0}" -gt 0 ] && echo "- $expired expired claim(s) in NOW.md: clear them with sh \"$PB_ROOT/scripts/brain.sh\" claims --expire."
+    [ "${inferred:-0}" = 1 ] && echo "- NOW.md is still marked inferred: ask the owner to confirm it when it fits."
+  } > "$T/pb-warn.$$"
+  [ -s "$T/pb-warn.$$" ] && { printf '\n## Needs attention\n'; cat "$T/pb-warn.$$"; }
+  rm -f "$T/pb-now.$$" "$T/pb-meta.$$" "$T/pb-warn.$$"
   return 0
 }
 
@@ -173,29 +204,18 @@ cap() {
 }
 
 # --- Every prompt: spread (digest) and save (capture) -------------------------------------------
-
-# Count prompts in the session's own file; register quietly if the session predates the plugin.
-bump_session() {
-  f="$BRAIN/sessions/$S8.md"
-  if [ ! -f "$f" ]; then
-    mkdir -p "$BRAIN/sessions"
-    sed -e "s|{{SID}}|$S8|g" -e "s|{{TS}}|$(pb_now)|g" "$PB_ROOT/templates/core/session.md" > "$f"
-    init_att
-  fi
-  awk '
-    /^prompts: / && !d { print "prompts: " ($2 + 1); d = 1; next }
-    /^---$/ && ++dash == 2 && !d { print "prompts: 1"; d = 1 }
-    { print }' "$f" | pb_replace "$f"
-}
+# Each part appends what the session should hear to $OUT. No output file, no JSON.
 
 # New log entries from other sessions since this session's marker. Updates the marker.
 digest() {
-  seen="$BRAIN/sessions/$S8.seen"
-  [ -f "$seen" ] || { mark_seen; return 0; }     # first prompt without a marker: start from now
-  changed=$(find "$BRAIN/log" -name '*.md' -newer "$seen" 2>/dev/null | sort)
-  [ -n "$changed" ] || return 0
-  # shellcheck disable=SC2086
-  awk -v me="s:$S8" -v out="$seen.tmp" -v max="$PB_DIGEST_MAX" '
+  [ -f "$SES.seen" ] || { mark_seen; return 0; }     # first prompt without a marker: start from now
+  set --
+  for l in "$BRAIN"/log/*.md; do
+    # a log file changed if it is not older than the marker (equal seconds count as changed)
+    [ -f "$l" ] && ! [ "$SES.seen" -nt "$l" ] && set -- "$@" "$l"
+  done
+  [ $# -gt 0 ] || return 0
+  awk -v me="s:$S8" -v out="$SES.seen" -v max="$PB_DIGEST_MAX" -v res="$OUT" '
     FILENAME == ARGV[1] { cnt[$1] = $2; next }
     FNR == 1 { f = FILENAME; sub(/.*\//, "", f); start = (f in cnt) ? cnt[f] : 0 }
     { cnt[f] = FNR }
@@ -213,30 +233,29 @@ digest() {
     want && NF { line[shown] = line[shown] substr($0, 1, 140); want = 0 }
     END {
       for (k in cnt) print k, cnt[k] > out
+      if (!shown && !back) exit
+      print "Other sessions added to the brain since your last prompt:" >> res
       first = shown > max ? shown - max + 1 : 1
-      if (shown > max) printf "(+%d earlier entries in .brain/log/)\n", shown - max
-      for (i = first; i <= shown; i++) printf "%s [log/%s]\n", line[i], src[i]
-      if (back) printf "(+%d backfilled entries)\n", back
-    }' "$seen" $changed
-  [ -f "$seen.tmp" ] && mv -f "$seen.tmp" "$seen"
-  return 0
+      if (shown > max) printf "(+%d earlier entries in .brain/log/)\n", shown - max >> res
+      for (i = first; i <= shown; i++) printf "%s [log/%s]\n", line[i], src[i] >> res
+      if (back) printf "(+%d backfilled entries)\n", back >> res
+    }' "$SES.seen" "$@"
 }
 
 inbox_name() {   # inbox_name <suffix>: a free path in sources/inbox/, no ':' (Windows)
-  d="$BRAIN/sources/inbox"; mkdir -p "$d"
+  d="$BRAIN/sources/inbox"; [ -d "$d" ] || mkdir -p "$d"
   b="$(pb_stamp)-$S8"; n=""; k=1
   while [ -e "$d/$b$n$1" ]; do k=$((k + 1)); n="-$k"; done
   printf '%s\n' "$d/$b$n$1"
 }
 
 log_entry() {   # log_entry <type> <tag> <text>
-  lf="$BRAIN/log/$(pb_today).md"
-  [ -f "$lf" ] || sed "s|{{DAY}}|$(pb_today)|" "$PB_ROOT/templates/core/log-day.md" > "$lf"
-  printf '\n### %s · s:%s · %s · %s\n%s\n' "$(pb_now)" "$S8" "$1" "$2" "$3" | pb_append "$BRAIN" "$lf"
+  now; lf="$BRAIN/log/${NOW%%T*}.md"
+  [ -f "$lf" ] || sed "s|{{DAY}}|${NOW%%T*}|" "$PB_ROOT/templates/core/log-day.md" > "$lf"
+  printf '\n### %s · s:%s · %s · %s\n%s\n' "$NOW" "$S8" "$1" "$2" "$3" | pb_append "$BRAIN" "$lf"
 }
 
 # If an identical file is already somewhere in sources/, print its path (relative to .brain/).
-# Same size first (cheap), then a byte comparison.
 same_as() {   # same_as <new file>
   s=$(wc -c < "$1" | tr -d ' ')
   find "$BRAIN/sources" -type f -size "${s}c" ! -path "$1" 2>/dev/null | while IFS= read -r o; do
@@ -246,55 +265,57 @@ same_as() {   # same_as <new file>
 
 # Save pasted project material verbatim (secrets redacted) before Claude replies.
 capture() {
-  [ -s "$TMPD/prompt.txt" ] || return 0
-  v=$(LC_ALL=C awk -f "$PB_ROOT/scripts/detect.awk" < "$TMPD/prompt.txt")
+  [ "${PLEN:-0}" -ge "$PB_CAPTURE_MIN" ] && [ -s "$PF" ] || return 0
+  v=$(LC_ALL=C awk -f "$PB_ROOT/scripts/detect.awk" < "$PF")
   case "$v" in context*) ;; *) return 0 ;; esac
   kind=${v#context }
   f=$(inbox_name .md); rel=${f#"$BRAIN"/}
-  sh "$PB_ROOT/scripts/redact.sh" "$TMPD/redacted" < "$TMPD/prompt.txt" > "$TMPD/body"
-  red=$(awk '{ printf "%s%s x%s", s, $1, $2; s = ", " }' "$TMPD/redacted")
-  lines=$(wc -l < "$TMPD/body" | tr -d ' ')
+  sh "$PB_ROOT/scripts/redact.sh" "$T/pb-red.$$" < "$PF" > "$T/pb-body.$$"
+  red=$(awk '{ printf "%s%s x%s", s, $1, $2; s = ", " }' "$T/pb-red.$$")
+  lines=$(wc -l < "$T/pb-body.$$" | tr -d ' ')
+  now
   {
     echo "---"
-    echo "captured: $(pb_now)"
+    echo "captured: $NOW"
     echo "session: $S8"
     echo "prompt_id: $PROMPT_ID"
     echo "detected: $kind"
     echo "redacted: ${red:-none}"
     echo "---"
-    cat "$TMPD/body"
+    cat "$T/pb-body.$$"
   } > "$f"
+  rm -f "$T/pb-red.$$" "$T/pb-body.$$"
   log_entry capture inbox "Saved $rel ($kind, $lines lines${red:+; redacted: $red}). Filing: s:$S8."
-  echo "Saved the pasted $kind verbatim to .brain/$rel${red:+ (credentials removed from the saved copy: $red; tell the owner)}."
+  echo "Saved the pasted $kind verbatim to .brain/$rel${red:+ (credentials removed from the saved copy: $red; tell the owner)}." >> "$OUT"
+  FILED=1
 }
 
 # Pasted images: Claude Code stores them next to the session scratchpad before this hook runs.
 images() {
-  [ -n "$SCRATCH" ] || return 0
-  dir="$(dirname -- "$(pb_path "$SCRATCH")")/images"
-  [ -d "$dir" ] || return 0
-  att="$BRAIN/sessions/$S8.att"; touch "$att"
+  scratch_images && [ -d "$IMGDIR" ] || return 0
   saved=""; dups=""
-  for i in "$dir"/*; do
+  for i in "$IMGDIR"/*; do
     [ -f "$i" ] || continue
-    n=$(basename -- "$i")
-    grep -qxF "img $n" "$att" && continue
-    f=$(inbox_name "-img-$n"); cp "$i" "$f" && echo "img $n" >> "$att"
+    n=${i##*/}
+    grep -qxF "img $n" "$SES.att" 2>/dev/null && continue
+    f=$(inbox_name "-img-$n"); cp "$i" "$f" && echo "img $n" >> "$SES.att"
     o=$(same_as "$f"); if [ -n "$o" ]; then rm -f "$f"; dups="$dups .brain/$o"; continue; fi
     saved="$saved .brain/${f#"$BRAIN"/}"
   done
-  [ -n "$dups" ] && echo "The pasted image(s) were already in the brain, not saved again:$dups."
+  [ -n "$dups" ] && echo "The pasted image(s) were already in the brain, not saved again:$dups." >> "$OUT"
   [ -n "$saved" ] || return 0
   log_entry capture inbox "Saved pasted image(s):$saved. Filing: s:$S8."
-  echo "Saved the pasted image(s) to:$saved."
+  echo "Saved the pasted image(s) to:$saved." >> "$OUT"
+  FILED=1
 }
 
 # Attachments found by the Stop hook after the previous reply.
 pending() {
-  p="$BRAIN/sessions/$S8.pending"
-  [ -s "$p" ] || return 0
-  echo "Attachments from your previous message: $(awk '{ printf "%s%s", s, $0; s = "; " }' "$p")."
-  rm -f "$p"
+  [ -s "$SES.pending" ] || return 0
+  { printf 'Attachments from your previous message: '
+    awk '{ printf "%s%s", s, $0; s = "; " } END { print "." }' "$SES.pending"; } >> "$OUT"
+  rm -f "$SES.pending"
+  FILED=1
 }
 
 json_out() {   # stdin text -> UserPromptSubmit JSON with additionalContext
@@ -305,14 +326,15 @@ json_out() {   # stdin text -> UserPromptSubmit JSON with additionalContext
 }
 
 prompt_hook() {
-  bump_session
-  d=$(digest); c=$(capture); i=$(images); p=$(pending)
-  [ -n "$d$c$i$p" ] || return 0
+  [ -f "$SES.md" ] || new_session_file            # a session that predates the plugin
+  echo >> "$SES.prompts"                          # count prompts (no program started)
+  FILED=""
+  digest; capture; images; pending
+  [ -s "$OUT" ] || return 0
   {
     echo "[project-brain]"
-    [ -n "$d" ] && printf 'Other sessions added to the brain since your last prompt:\n%s\n' "$d"
-    for s in "$c" "$i" "$p"; do [ -n "$s" ] && echo "$s"; done
-    if [ -n "$c$i$p" ]; then
+    cat "$OUT"
+    if [ -n "$FILED" ]; then
       echo "Do what the owner asked first. Then file what was saved, per the project-brain protocol skill:"
       echo "sort it from sources/inbox/ into the sources/ folder MAP.md names for it, add a line to"
       echo "sources/INDEX.md (and a <file>.md note for images and PDFs), log it, and update the brain"
@@ -327,7 +349,7 @@ stop_hook() {
   [ -n "$TRANSCRIPT" ] || return 0
   t=$(pb_path "$TRANSCRIPT"); [ -f "$t" ] || return 0
   # Decoding can take a moment: do it in the background so the session is not held up.
-  ( stop_work "$t" ) </dev/null >/dev/null 2>>"${CLAUDE_PLUGIN_DATA:-${TMPDIR:-/tmp}}/project-brain-errors.log" &
+  ( stop_work "$t" ) </dev/null >/dev/null 2>>"$ERRF" &
 }
 
 ext_for() {
@@ -342,16 +364,15 @@ b64dec() { base64 -d 2>/dev/null || base64 -D 2>/dev/null || openssl base64 -d -
 
 stop_work() {
   t=$1
-  att="$BRAIN/sessions/$S8.att"; touch "$att"
-  from=$(sed -n 's/^tlines //p' "$att" | tail -n 1); from=${from:-0}
+  [ -f "$SES.att" ] || : > "$SES.att"
+  from=$(sed -n 's/^tlines //p' "$SES.att" | tail -n 1); from=${from:-0}
   total=$(wc -l < "$t" | tr -d ' ')
   [ "$total" -gt "$from" ] || return 0
-  w=$(mktemp -d 2>/dev/null) || { w="${TMPDIR:-/tmp}/pbs.$$"; mkdir -p "$w"; }
+  w=$(mktemp -d 2>/dev/null) || { w="$T/pbs.$$"; mkdir -p "$w"; }
   imgs=1
-  [ -n "$SCRATCH" ] && [ -d "$(dirname -- "$(pb_path "$SCRATCH")")/images" ] && imgs=0   # already copied by the prompt hook
+  scratch_images && [ -d "$IMGDIR" ] && imgs=0   # already copied by the prompt hook
   tail -n +"$((from + 1))" "$t" | head -n "$((total - from))" |
-    LC_ALL=C awk -v out="$w" -v images="$imgs" "$(cat "$PB_ROOT/scripts/json.awk")
-$(cat "$PB_ROOT/scripts/attach.awk")" > "$w/manifest"
+    LC_ALL=C awk -v out="$w" -v images="$imgs" -f "$PB_ROOT/scripts/json.awk" -f "$PB_ROOT/scripts/attach.awk" > "$w/manifest"
   saved=""
   while IFS='	' read -r n enc mime title payload; do
     [ -f "$payload" ] || continue
@@ -362,14 +383,14 @@ $(cat "$PB_ROOT/scripts/attach.awk")" > "$w/manifest"
     if [ "$enc" = b64 ]; then b64dec < "$payload" > "$f"
     else sh "$PB_ROOT/scripts/redact.sh" < "$payload" > "$f"; fi
     [ -s "$f" ] || { rm -f "$f"; continue; }
-    o=$(same_as "$f"); if [ -n "$o" ]; then rm -f "$f"; echo "already in the brain, not saved again: .brain/$o" >> "$BRAIN/sessions/$S8.pending"; continue; fi
+    o=$(same_as "$f"); if [ -n "$o" ]; then rm -f "$f"; echo "already in the brain, not saved again: .brain/$o" >> "$SES.pending"; continue; fi
     saved="$saved .brain/${f#"$BRAIN"/}"
   done < "$w/manifest"
   rm -rf "$w"
-  echo "tlines $total" >> "$att"
+  echo "tlines $total" >> "$SES.att"
   [ -n "$saved" ] || return 0
   log_entry capture inbox "Saved attachment(s):$saved. Filing: s:$S8."
-  echo "saved:$saved" >> "$BRAIN/sessions/$S8.pending"
+  echo "saved:$saved" >> "$SES.pending"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -385,5 +406,8 @@ main() {
   esac
 }
 
-{ main 2>&1 >&3 3>&- | errlog; } 3>&1
+# Errors go to a log file, never into the session.
+ERRF="${CLAUDE_PLUGIN_DATA:-$T}/project-brain-errors.log"
+[ -d "${ERRF%/*}" ] || mkdir -p "${ERRF%/*}" 2>/dev/null
+main 2>>"$ERRF"
 exit 0

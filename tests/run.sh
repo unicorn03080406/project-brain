@@ -227,7 +227,7 @@ t_hookstart() {
   out2=$(hk session-start 99999999aaaa startup)
   check "a second session sees the first as live" 'printf "%s" "$out2" | grep -q "^- s:abcdef12 · goal not set"'
   check "a session does not list itself" '! printf "%s" "$out2" | grep -q "^- s:99999999"'
-  touch -t 202001010000 .brain/sessions/abcdef12.seen .brain/sessions/abcdef12.md
+  touch -t 202001010000 .brain/sessions/abcdef12.*
   check "sessions idle for over 24 h are not listed" '! hk session-start 77777777 startup | grep -q "s:abcdef12"'
   echo hi > q1.txt; hp abcdef1234567 q1.txt >/dev/null
   hk session-end abcdef1234567 other >/dev/null
@@ -263,15 +263,18 @@ t_hookdrift() {
 }
 
 t_hookspeed() {
+  export CLAUDE_PROJECT_DIR   # time the hooks the way Claude Code runs them
   sh "$ROOT/tests/fixtures/make-adopt-ws.sh" ws >/dev/null; cd ws
   b scaffold . --name NW --mode private --adopt >/dev/null
   i=0; while [ $i -lt 30 ]; do echo "entry $i" | b log --type status --session s$i >/dev/null; i=$((i+1)); done
+  CLAUDE_PROJECT_DIR=$(pwd)
   i=0; while [ $i -lt 6 ]; do hk session-start "sess$i" startup >/dev/null; i=$((i+1)); done
   t0=$(ms); i=0; while [ $i -lt 5 ]; do hk session-start speed123 startup >/dev/null; i=$((i+1)); done; t1=$(ms)
   avg=$(( (t1 - t0) / 5 ))
   echo "        session-start average: ${avg} ms"
   check "session-start under 1000 ms on average" '[ "$avg" -lt 1000 ]'
   cd "$W" && mkdir -p quiet && cd quiet
+  CLAUDE_PROJECT_DIR=$(pwd)
   t0=$(ms); i=0; while [ $i -lt 5 ]; do hk session-start q startup >/dev/null; i=$((i+1)); done; t1=$(ms)
   avg=$(( (t1 - t0) / 5 )); echo "        no-brain exit average: ${avg} ms"
   check "no-brain exit under 150 ms on average" '[ "$avg" -lt 150 ]'
@@ -355,7 +358,7 @@ t_capture() {
   g=$(ls -t .brain/sources/inbox/*.md | head -n 1)
   check "secrets removed from the saved copy" '! grep -q "Tr0ub4dor" "$g" && ! grep -q "sk-live-4f9a" "$g" && grep -q "REDACTED" "$g"'
   check "the session is told credentials were removed" 'printf "%s" "$out" | grep -q "credentials removed"'
-  check "prompts are counted in the session file" 'grep -q "^prompts: 4" .brain/sessions/aaaaaaaa.md'
+  check "prompts are counted" '[ "$(wc -l < .brain/sessions/aaaaaaaa.prompts | tr -d " ")" = 4 ]'
   check "map-check passes after captures" 'b claude-block >/dev/null && b map-check'
   check "no brain: prompt hook is silent" 'mkdir -p "$W/nobrain" && (cd "$W/nobrain" && [ -z "$(hp x1 "$DT/context/zoom-transcript.txt")" ] && [ -z "$(ls -A)" ])'
 }
@@ -434,6 +437,7 @@ t_phantom() {
 
 t_promptspeed() {
   sh "$ROOT/tests/fixtures/make-adopt-ws.sh" ws >/dev/null; cd ws
+  export CLAUDE_PROJECT_DIR=$(pwd)   # time the hooks the way Claude Code runs them
   b scaffold . --name NW --mode private --adopt >/dev/null
   hk session-start sp111111 startup >/dev/null; hk session-start sp222222 startup >/dev/null
   echo "what next?" > q.txt
@@ -696,11 +700,38 @@ t_sizes() {
   check "auto tier within ~3k tokens" '[ "$a" -le 3000 ]'
 }
 
+# How many programs a hook starts. Each costs ~1 ms on macOS/Linux but 15-30 ms in Git Bash, so
+# this is the number that decides speed on Windows. Wrappers in front of PATH count every start.
+t_procs() {
+  bin="$W/countbin"; mkdir -p "$bin"; CNT="$W/count"
+  for c in awk sed grep find date cat rm mv wc tr mkdir cut sort head tail cp cmp base64 git touch ls dirname basename mktemp printf; do
+    real=$(command -v "$c" 2>/dev/null) || continue
+    case "$real" in /*) ;; *) continue ;; esac     # shell built-ins are free
+    printf '#!/bin/sh\necho %s >> "%s"\nexec %s "$@"\n' "$c" "$CNT" "$real" > "$bin/$c"; chmod +x "$bin/$c"
+  done
+  counted() { : > "$CNT"; PATH="$bin:$PATH" "$@" >/dev/null 2>&1; wc -l < "$CNT" | tr -d ' '; }
+  b scaffold . --name Procs --mode private >/dev/null
+  hk session-start aaaa1111 startup >/dev/null; hk session-start bbbb2222 startup >/dev/null
+  echo "what next?" > q.txt
+  hp aaaa1111 q.txt >/dev/null
+  mkdir -p "$W/procs-none"
+  n0=$(cd "$W/procs-none" && CLAUDE_PROJECT_DIR="$W/procs-none" counted sh -c "printf '{}' | sh '$H' prompt")
+  n1=$(CLAUDE_PROJECT_DIR=$(pwd) counted sh -c "LC_ALL=C awk -v sid=aaaa1111 -v cwd=\"$(pwd)\" 'END{printf \"{\\\"session_id\\\":\\\"%s\\\",\\\"cwd\\\":\\\"%s\\\",\\\"prompt\\\":\\\"what next?\\\"}\", sid, cwd}' /dev/null | sh '$H' prompt")
+  echo "entry" | b log --type status --session bbbb2222 >/dev/null
+  n2=$(CLAUDE_PROJECT_DIR=$(pwd) counted sh -c "printf '{\"session_id\":\"aaaa1111\",\"cwd\":\"%s\",\"prompt\":\"hi\"}' \"$(pwd)\" | sh '$H' prompt")
+  n3=$(CLAUDE_PROJECT_DIR=$(pwd) counted sh -c "printf '{\"session_id\":\"cccc3333\",\"cwd\":\"%s\",\"source\":\"startup\"}' \"$(pwd)\" | sh '$H' session-start")
+  echo "        programs started: no brain $n0; plain prompt $((n1 - 1)); prompt + digest $n2; session start $n3"
+  check "no brain: the prompt hook starts no programs" '[ "$n0" -eq 0 ]'
+  check "plain prompt: at most 2 programs" '[ $((n1 - 1)) -le 2 ]'
+  check "prompt with a digest: at most 5 programs" '[ "$n2" -le 5 ]'
+  check "session start: at most 20 programs" '[ "$n3" -le 20 ]'
+}
+
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
          hookquiet hookstart hookbudget hookdrift hookspeed hooksjson \
          detector redact capture digest images attach phantom promptspeed \
          claims move retire retier refs capturecmd catchup tidy upgrade sessionstatus skills \
-         concurrent split sizes; do run "$t"; done
+         concurrent split sizes procs; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo

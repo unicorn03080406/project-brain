@@ -8,6 +8,14 @@ Versions follow `MAJOR.MINOR.PATCH`:
 
 Each entry names the brain format it writes.
 
+## 1.0.1 (2026-09-23), brain format 1
+
+- Faster hooks, above all on Windows, where Git Bash starts programs slowly. In a folder
+  without a brain the prompt hook now starts no programs at all. A plain prompt starts one,
+  a prompt with news from other chats about five, and a session start about 20.
+  `tests/run.sh` counts them so this cannot quietly get worse.
+- Session start no longer runs the full map check (`/project-brain:tidy` still does).
+
 ## 1.0.0 (2026-09-23), brain format 1
 
 First release.

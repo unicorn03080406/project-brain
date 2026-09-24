@@ -139,29 +139,33 @@ pb_find_files() { # pb_find_files DIR [maxdepth]: workspace files, skipping junk
 }
 
 # --- Shared by the hooks and brain.sh (need BRAIN, PROJ and S8 set) ----------------------------
+# Few programs on purpose: these run at every session start (see the speed note in hook.sh).
 
+# Other sessions marked live that were active in the last 24 h: one find, one awk.
 open_sessions() {
-  now=$(pb_epoch)
-  for f in "$BRAIN"/sessions/*.md; do
-    [ -f "$f" ] || continue
-    id=$(basename -- "$f" .md)
-    [ "$id" = "$S8" ] && continue
-    grep -q '^status: live' "$f" || continue
-    # Stale after 24 h without a start or a prompt (both touch the session file or its marker).
-    seen="$BRAIN/sessions/$id.seen"; [ -f "$seen" ] || seen=$f
-    if [ -z "$(find "$f" "$seen" -mmin -1440 2>/dev/null)" ]; then continue; fi
-    goal=$(awk '/^## Goal/ { g = 1; next } /^## / { g = 0 } g && NF { print; exit }' "$f")
-    claims=$(awk '/^## Claims/ { c = 1; next } /^## / { c = 0 } c && /^- / { n++ } END { print n + 0 }' "$f")
-    printf -- '- s:%s · %s%s\n' "$id" "${goal:-goal not set}" "$( [ "$claims" -gt 0 ] && echo " · $claims claim(s)")"
-  done
+  set -- "$BRAIN"/sessions/*.md
+  [ -f "$1" ] || return 0
+  recent=$(find "$BRAIN/sessions" -type f -mmin -1440 2>/dev/null)
+  [ -n "$recent" ] || return 0
+  PB_RECENT=$recent awk -v me="$S8" '
+    BEGIN { n = split(ENVIRON["PB_RECENT"], r, "\n")
+            for (i = 1; i <= n; i++) { b = r[i]; sub(/.*\//, "", b); sub(/\.[a-z]+$/, "", b); rec[b] = 1 } }
+    function flush() { if (id != "" && id != me && live && (id in rec))
+                         printf "- s:%s · %s%s\n", id, (goal != "" ? goal : "goal not set"), (cl ? " · " cl " claim(s)" : "") }
+    FNR == 1 { flush(); id = FILENAME; sub(/.*\//, "", id); sub(/\.md$/, "", id); live = 0; goal = ""; cl = 0; sec = "" }
+    /^status: live/ { live = 1 }
+    /^## / { sec = substr($0, 4); next }
+    sec == "Goal" && NF && goal == "" { goal = $0 }
+    sec == "Claims" && /^- / { cl++ }
+    END { flush() }' "$@"
 }
-# Commits in each repo since the Freshness stamp in NOW.md.
+
+# Commits in each repo since the Freshness stamp in NOW.md: one awk, then git only per repo.
 repo_drift() {
-  awk '/^## Freshness/ { f = 1; next } /^## / { f = 0 } f && /^- repo / { print }' "$BRAIN/NOW.md" |
-  while IFS= read -r line; do
-    path=$(printf '%s' "$line" | sed -n 's/^- repo \([^ ]*\) · last seen \([0-9a-f]*\).*/\1/p')
-    hash=$(printf '%s' "$line" | sed -n 's/^- repo \([^ ]*\) · last seen \([0-9a-f]*\).*/\2/p')
-    [ -n "$path" ] && [ -n "$hash" ] || continue
+  awk '/^## Freshness/ { f = 1; next } /^## / { f = 0 }
+       f && match($0, /^- repo [^ ]+ · last seen [0-9a-f]+/) {
+         s = substr($0, 8, RLENGTH - 7); split(s, a, " · last seen "); print a[1], a[2] }' "$BRAIN/NOW.md" |
+  while read -r path hash; do
     case "$path" in /*) r=$path ;; *) r="$PROJ/$path" ;; esac
     n=$(git -C "$r" rev-list --count "$hash..HEAD" 2>/dev/null) || { echo "- $path: last-seen commit $hash not found"; continue; }
     [ "$n" -gt 0 ] && echo "- $path: $n new commit(s) since $hash ($(git -C "$r" log -1 --format='%h %ad' --date=short 2>/dev/null))"
