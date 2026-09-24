@@ -10,6 +10,9 @@ export HOME="$W/home"; mkdir -p "$HOME"
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=t@example.com
 export GIT_CONFIG_NOSYSTEM=1
 unset CLAUDE_PROJECT_DIR PB_BRAIN BRAIN_SESSION 2>/dev/null || true
+# Starting a program is ~20x slower in Git Bash, so timing limits are 4x there. The program counts
+# (t_procs) stay strict everywhere; they are what keeps Windows fast.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) SLOW=4 ;; *) SLOW=1 ;; esac
 check() { if eval "$2" >/dev/null 2>"$W/.err"; then ok "$1"; else bad "$1"; [ -n "${DEBUG:-}" ] && sed "s/^/        /" "$W/.err"; fi; }   # check "desc" "cmd"
 b() { ${PB_SH:-sh} "$B" "$@"; }   # PB_SH=dash to test another shell
 gitinit() { git init -q "$1" 2>/dev/null; git -C "$1" config commit.gpgsign false; }
@@ -272,12 +275,12 @@ t_hookspeed() {
   t0=$(ms); i=0; while [ $i -lt 5 ]; do hk session-start speed123 startup >/dev/null; i=$((i+1)); done; t1=$(ms)
   avg=$(( (t1 - t0) / 5 ))
   echo "        session-start average: ${avg} ms"
-  check "session-start under 1000 ms on average" '[ "$avg" -lt 1000 ]'
+  check "session-start under $((1000 * SLOW)) ms on average" '[ "$avg" -lt $((1000 * SLOW)) ]'
   cd "$W" && mkdir -p quiet && cd quiet
   CLAUDE_PROJECT_DIR=$(pwd)
   t0=$(ms); i=0; while [ $i -lt 5 ]; do hk session-start q startup >/dev/null; i=$((i+1)); done; t1=$(ms)
   avg=$(( (t1 - t0) / 5 )); echo "        no-brain exit average: ${avg} ms"
-  check "no-brain exit under 150 ms on average" '[ "$avg" -lt 150 ]'
+  check "no-brain exit under $((150 * SLOW)) ms on average" '[ "$avg" -lt $((150 * SLOW)) ]'
 }
 
 t_hooksjson() {
@@ -443,12 +446,12 @@ t_promptspeed() {
   echo "what next?" > q.txt
   t0=$(ms); i=0; while [ $i -lt 10 ]; do hp sp111111 q.txt >/dev/null; i=$((i+1)); done; t1=$(ms)
   a=$(( (t1 - t0) / 10 )); echo "        prompt hook, plain prompt: ${a} ms"
-  check "plain prompt under 200 ms" '[ "$a" -lt 200 ]'
+  check "plain prompt under $((200 * SLOW)) ms" '[ "$a" -lt $((200 * SLOW)) ]'
   t0=$(ms); i=0; while [ $i -lt 10 ]; do echo "entry $i" | b log --type status --session sp222222 >/dev/null; hp sp111111 "$DT/context/meeting-notes.txt" >/dev/null; i=$((i+1)); done; t1=$(ms)
   # subtract the time of the log calls, measured separately
   l0=$(ms); i=0; while [ $i -lt 10 ]; do echo "entry $i" | b log --type status --session sp222222 >/dev/null; i=$((i+1)); done; l1=$(ms)
   a=$(( (t1 - t0 - (l1 - l0)) / 10 )); echo "        prompt hook, capture + digest: ${a} ms"
-  check "capture and digest under 200 ms" '[ "$a" -lt 200 ]'
+  check "capture and digest under $((200 * SLOW)) ms" '[ "$a" -lt $((200 * SLOW)) ]'
 }
 
 # --- M4: claims, structure changes, capture, catch-up, tidy, upgrade, skills --------------------
@@ -725,6 +728,9 @@ t_procs() {
   check "plain prompt: at most 2 programs" '[ $((n1 - 1)) -le 2 ]'
   check "prompt with a digest: at most 5 programs" '[ "$n2" -le 5 ]'
   check "session start: at most 20 programs" '[ "$n3" -le 20 ]'
+  n4=$(CLAUDE_PROJECT_DIR=$(pwd) counted sh -c "LC_ALL=C awk -v sid=aaaa1111 -v cwd=\"$(pwd)\" 'function esc(s){gsub(/\\\\/,\"\\\\\\\\\",s);gsub(/\"/,\"\\\\\\\"\",s);return s} {b=b (NR>1?\"\\\\n\":\"\") esc(\$0)} END{printf \"{\\\"session_id\\\":\\\"%s\\\",\\\"cwd\\\":\\\"%s\\\",\\\"prompt\\\":\\\"%s\\\"}\", sid, cwd, b}' \"$DT/context/meeting-notes.txt\" | sh '$H' prompt")
+  echo "        programs started when saving pasted material: $((n4 - 1))"
+  check "saving pasted material: at most 15 programs" '[ $((n4 - 1)) -le 15 ]'
 }
 
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \

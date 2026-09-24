@@ -724,14 +724,14 @@ cmd_capture() {
     while [ -e "$f" ]; do k=$((k + 1)); f="$d/$(pb_stamp)-$S8-$k-$base"; done
     case "$base" in
       *.md|*.txt|*.eml|*.csv|*.vtt|*.srt|*.json|*.html|*.htm|*.yaml|*.yml)
-        sh "$PB_ROOT/scripts/redact.sh" "$w/r" < "$src" > "$f" ;;
+        pb_redact "$src" "$f" "$w/r" ;;
       *) cp "$src" "$f" ;;
     esac
   else
     cat > "$w/in"; [ -s "$w/in" ] || pb_die "nothing to capture (give a file, or text on stdin)"
     f="$d/$(pb_stamp)-$S8.md"; k=1
     while [ -e "$f" ]; do k=$((k + 1)); f="$d/$(pb_stamp)-$S8-$k.md"; done
-    sh "$PB_ROOT/scripts/redact.sh" "$w/r" < "$w/in" > "$w/body"
+    pb_redact "$w/in" "$w/body" "$w/r"
     { echo "---"; echo "captured: $(pb_now)"; echo "session: $S8"; echo "detected: $kind"
       echo "redacted: $(awk '{ printf "%s%s x%s", s, $1, $2; s = ", " }' "$w/r")"; echo "---"; cat "$w/body"; } > "$f"
   fi

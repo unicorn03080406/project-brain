@@ -47,7 +47,9 @@ pb_find_brain() {
   home=$(CDPATH= cd -- "$HOME" 2>/dev/null && pwd -P)
   while [ -n "$d" ] && [ "$d" != "/" ] && [ "$d" != "$home" ]; do
     if [ -f "$d/.brain/MAP.md" ]; then printf '%s\n' "$d/.brain"; return 0; fi
-    d=$(dirname -- "$d")
+    # Walk up with string operations. Stop if a step does not shorten the path, so a strange
+    # value (seen when a shell ignores SIGPIPE) can never loop forever.
+    p=${d%/*}; [ "$p" = "$d" ] && break; d=$p
   done
   return 1
 }
@@ -90,7 +92,7 @@ pb_map_has() {    # pb_map_has MAP path
 
 pb_lock() {       # pb_lock BRAIN name
   ld="$1/.locks/$2"
-  mkdir -p "$1/.locks"
+  [ -d "$1/.locks" ] || mkdir -p "$1/.locks"
   i=0
   while ! mkdir "$ld" 2>/dev/null; do
     i=$((i + 1))
@@ -101,7 +103,7 @@ pb_lock() {       # pb_lock BRAIN name
     [ $i -gt 400 ] && return 1
     sleep 0.05 2>/dev/null || sleep 1
   done
-  pb_epoch > "$ld/t"
+  printf '%s\n' "${EPOCH:-$(pb_epoch)}" > "$ld/t"   # the hooks already know the time
 }
 
 pb_unlock() { rm -rf "$1/.locks/$2"; }
@@ -170,4 +172,27 @@ repo_drift() {
     n=$(git -C "$r" rev-list --count "$hash..HEAD" 2>/dev/null) || { echo "- $path: last-seen commit $hash not found"; continue; }
     [ "$n" -gt 0 ] && echo "- $path: $n new commit(s) since $hash ($(git -C "$r" log -1 --format='%h %ad' --date=short 2>/dev/null))"
   done
+}
+
+# --- Redaction -----------------------------------------------------------------------------------
+# pb_redact <in> <out> [report]: copy <in> to <out> with credentials replaced by [REDACTED: <kind>].
+# If a report file is given it gets one line per kind: "<kind> <count>". One sed pass; counting
+# runs only when something was redacted. sed -E with intervals works in BSD, GNU and Git Bash sed.
+pb_redact() {
+  sed -E \
+    -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/c\
+[REDACTED: private-key]' \
+    -e 's/AKIA[0-9A-Z]{16}/[REDACTED: aws-key]/g' \
+    -e 's/gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}/[REDACTED: github-token]/g' \
+    -e 's/xox[abprs]-[A-Za-z0-9-]{10,}/[REDACTED: slack-token]/g' \
+    -e 's/(sk|rk|pk)[-_](live|test|ant|proj)?[-_]?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}/[REDACTED: api-key]/g' \
+    -e 's/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/[REDACTED: jwt]/g' \
+    -e 's/([Bb]earer )[A-Za-z0-9._~+\/-]{20,}/\1[REDACTED: token]/g' \
+    -e 's#([a-z][a-z0-9+.-]*://[^/:@ ]+:)[^/@ ]+@#\1[REDACTED: password]@#g' \
+    -e 's/(([Pp]ass(word|wd)|PASS(WORD|WD)|[Pp]wd|PWD|[Ss]ecret|SECRET|[Tt]oken|TOKEN|[Aa]pi[_-]?[Kk]ey|API[_-]?KEY|[Aa]ccess[_-]?[Kk]ey|ACCESS[_-]?KEY|[Cc]lient[_-]?[Ss]ecret|CLIENT[_-]?SECRET)["'"'"']?[[:space:]]*[:=][[:space:]]*)[^[:space:]\[][^[:space:]]*/\1[REDACTED: secret]/g' \
+    "$1" > "$2"
+  [ -n "${3:-}" ] || return 0
+  : > "$3"
+  grep -q 'REDACTED: ' "$2" 2>/dev/null || return 0
+  grep -o '\[REDACTED: [a-z-]*\]' "$2" | sort | uniq -c | awk '{ k = $3; sub(/\]$/, "", k); print k, $1 }' > "$3"
 }

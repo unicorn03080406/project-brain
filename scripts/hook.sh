@@ -242,17 +242,23 @@ digest() {
     }' "$SES.seen" "$@"
 }
 
-inbox_name() {   # inbox_name <suffix>: a free path in sources/inbox/, no ':' (Windows)
-  d="$BRAIN/sources/inbox"; [ -d "$d" ] || mkdir -p "$d"
-  b="$(pb_stamp)-$S8"; n=""; k=1
-  while [ -e "$d/$b$n$1" ]; do k=$((k + 1)); n="-$k"; done
-  printf '%s\n' "$d/$b$n$1"
+inbox_name() {   # inbox_name <suffix>: sets INBOX to a free path in sources/inbox/ (no ':', Windows)
+  now   # ib_* names: callers use n, d, f, ... (shell variables are global)
+  ib_x=${NOW%[-+]*}; ib_d=${ib_x%%T*}; ib_t=${ib_x#*T}   # 20260923-101433 from NOW, no program
+  ib_r=${ib_d#*-}; ib_m=${ib_t#*:}
+  ib_b="${ib_d%%-*}${ib_r%%-*}${ib_r#*-}-${ib_t%%:*}${ib_m%%:*}${ib_m#*:}-$S8"
+  ib_dir="$BRAIN/sources/inbox"; [ -d "$ib_dir" ] || mkdir -p "$ib_dir"
+  ib_n=""; ib_k=1
+  while [ -e "$ib_dir/$ib_b$ib_n$1" ]; do ib_k=$((ib_k + 1)); ib_n="-$ib_k"; done
+  INBOX="$ib_dir/$ib_b$ib_n$1"
 }
 
-log_entry() {   # log_entry <type> <tag> <text>
-  now; lf="$BRAIN/log/${NOW%%T*}.md"
-  [ -f "$lf" ] || sed "s|{{DAY}}|${NOW%%T*}|" "$PB_ROOT/templates/core/log-day.md" > "$lf"
-  printf '\n### %s · s:%s · %s · %s\n%s\n' "$NOW" "$S8" "$1" "$2" "$3" | pb_append "$BRAIN" "$lf"
+log_entry() {   # log_entry <type> <tag> <text>: one locked append, no temp files
+  now; day=${NOW%%T*}; lf="$BRAIN/log/$day.md"
+  [ -f "$lf" ] || sed "s|{{DAY}}|$day|" "$PB_ROOT/templates/core/log-day.md" > "$lf"
+  pb_lock "$BRAIN" append || return 0
+  printf '\n### %s · s:%s · %s · %s\n%s\n' "$NOW" "$S8" "$1" "$2" "$3" >> "$lf"
+  pb_unlock "$BRAIN" append
 }
 
 # If an identical file is already somewhere in sources/, print its path (relative to .brain/).
@@ -269,11 +275,9 @@ capture() {
   v=$(LC_ALL=C awk -f "$PB_ROOT/scripts/detect.awk" < "$PF")
   case "$v" in context*) ;; *) return 0 ;; esac
   kind=${v#context }
-  f=$(inbox_name .md); rel=${f#"$BRAIN"/}
-  sh "$PB_ROOT/scripts/redact.sh" "$T/pb-red.$$" < "$PF" > "$T/pb-body.$$"
-  red=$(awk '{ printf "%s%s x%s", s, $1, $2; s = ", " }' "$T/pb-red.$$")
-  lines=$(wc -l < "$T/pb-body.$$" | tr -d ' ')
-  now
+  inbox_name .md; f=$INBOX; rel=${f#"$BRAIN"/}
+  pb_redact "$PF" "$T/pb-body.$$" "$T/pb-red.$$"
+  red=""; while read -r rk rc; do red="${red:+$red, }$rk x$rc"; done < "$T/pb-red.$$"
   {
     echo "---"
     echo "captured: $NOW"
@@ -285,7 +289,7 @@ capture() {
     cat "$T/pb-body.$$"
   } > "$f"
   rm -f "$T/pb-red.$$" "$T/pb-body.$$"
-  log_entry capture inbox "Saved $rel ($kind, $lines lines${red:+; redacted: $red}). Filing: s:$S8."
+  log_entry capture inbox "Saved $rel ($kind${red:+; redacted: $red}). Filing: s:$S8."
   echo "Saved the pasted $kind verbatim to .brain/$rel${red:+ (credentials removed from the saved copy: $red; tell the owner)}." >> "$OUT"
   FILED=1
 }
@@ -298,7 +302,7 @@ images() {
     [ -f "$i" ] || continue
     n=${i##*/}
     grep -qxF "img $n" "$SES.att" 2>/dev/null && continue
-    f=$(inbox_name "-img-$n"); cp "$i" "$f" && echo "img $n" >> "$SES.att"
+    inbox_name "-img-$n"; f=$INBOX; cp "$i" "$f" && echo "img $n" >> "$SES.att"
     o=$(same_as "$f"); if [ -n "$o" ]; then rm -f "$f"; dups="$dups .brain/$o"; continue; fi
     saved="$saved .brain/${f#"$BRAIN"/}"
   done
@@ -379,9 +383,9 @@ stop_work() {
     e=$(ext_for "$mime")
     base=$(printf '%s' "${title:-attachment-$n.$e}" | sed 's/[^A-Za-z0-9._-]/-/g')
     case "$base" in *.*) ;; *) base="$base.$e" ;; esac
-    f=$(inbox_name "-$base")
+    inbox_name "-$base"; f=$INBOX
     if [ "$enc" = b64 ]; then b64dec < "$payload" > "$f"
-    else sh "$PB_ROOT/scripts/redact.sh" < "$payload" > "$f"; fi
+    else pb_redact "$payload" "$f"; fi
     [ -s "$f" ] || { rm -f "$f"; continue; }
     o=$(same_as "$f"); if [ -n "$o" ]; then rm -f "$f"; echo "already in the brain, not saved again: .brain/$o" >> "$SES.pending"; continue; fi
     saved="$saved .brain/${f#"$BRAIN"/}"

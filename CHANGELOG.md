@@ -8,6 +8,15 @@ Versions follow `MAJOR.MINOR.PATCH`:
 
 Each entry names the brain format it writes.
 
+## 1.0.2 (2026-09-23), brain format 1
+
+- Fixed: a hang when the plugin runs in a process that ignores the broken-pipe signal (GitHub
+  Actions macOS runners do this; some editors may too). Finding the brain can no longer loop.
+- Faster saving of pasted material on Windows: about 14 programs instead of 30+ (redaction is one
+  sed pass, log appends need no temp files).
+- Redaction no longer depends on sed's case-insensitive flag.
+- CI: a 20-minute limit per job, and a Linux run with the broken-pipe signal ignored.
+
 ## 1.0.1 (2026-09-23), brain format 1
 
 - Faster hooks, above all on Windows, where Git Bash starts programs slowly. In a folder

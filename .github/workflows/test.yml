@@ -7,6 +7,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20   # a hung test must not burn Actions minutes (macOS counts 10x on private repos)
     defaults:
       run:
         shell: bash   # Git Bash on Windows
@@ -27,3 +28,6 @@ jobs:
           wp=$(cygpath -w "$RUNNER_TEMP/p" | sed 's/\\/\\\\/g')
           out=$(printf '{"session_id":"w1","cwd":"%s","source":"startup"}' "$wp" | sh "$win\\scripts\\hook.sh" session-start)
           echo "$out" | grep -q "Project brain: Win"
+      - name: Run tests with SIGPIPE ignored (some runners and editors start processes this way)
+        if: runner.os == 'Linux'
+        run: bash -c "trap '' PIPE; sh tests/run.sh"
