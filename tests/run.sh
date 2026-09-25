@@ -622,12 +622,12 @@ t_sessionstatus() {
 }
 
 t_skills() {
-  for s in init protocol catchup handoff tidy capture; do
+  for s in init protocol catchup handoff tidy capture voice; do
     f="$ROOT/skills/$s/SKILL.md"
     check "$s: frontmatter with name and description" '[ "$(head -n 1 "$f")" = "---" ] && grep -q "^name: $s\$" "$f" && grep -q "^description: ." "$f"'
     check "$s: helper path points at brain.sh" 'grep -q "\${CLAUDE_SKILL_DIR}/../../scripts/brain.sh" "$f"'
   done
-  check "protocol is model-only; init, handoff, tidy, capture are user-only" '(grep -q "^user-invocable: false" "$ROOT/skills/protocol/SKILL.md" && for s in init handoff tidy capture; do grep -q "^disable-model-invocation: true" "$ROOT/skills/$s/SKILL.md" || exit 1; done)'
+  check "protocol and voice are model-only; init, handoff, tidy, capture are user-only" '(grep -q "^user-invocable: false" "$ROOT/skills/protocol/SKILL.md" && grep -q "^user-invocable: false" "$ROOT/skills/voice/SKILL.md" && for s in init handoff tidy capture; do grep -q "^disable-model-invocation: true" "$ROOT/skills/$s/SKILL.md" || exit 1; done)'
   check "every brain.sh command a skill uses exists" '(for c in $(grep -ho "B [a-z-]*" "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/init/reference/*.md | awk "{print \$2}" | sort -u); do case "$c" in in|is|and|or|below|to|log|a) continue;; esac; sh "$B" 2>&1 | grep -q "^  $c" || { echo "missing: $c" >&2; exit 1; }; done)'
   needs_perm() { for f in "$ROOT"/skills/*/SKILL.md; do grep -q '^```!' "$f" || continue; sed -n '1,/^---$/p' "$f" | grep -q '^allowed-tools: Bash(sh:\*)' || { echo "$f" >&2; return 1; }; done; }
   check "skills that run a command up front declare Bash permission for it" needs_perm
@@ -761,11 +761,38 @@ t_winpath() {
   check "detect still counts nested repos" 'mkdir -p ws/r1 && git init -q ws/r1 && wb detect ws | grep -q "nested-repos: 1"'
 }
 
+# Message voice: the owner's guide and notes are personal (~/.project-brain), examples per project.
+t_voice() {
+  b scaffold . --name Voice --mode private >/dev/null
+  b add "people.md|demand|file|people|x" >/dev/null; b claude-block >/dev/null
+  check "no voice file yet" '[ ! -e "$HOME/.project-brain/voice.md" ]'
+  out=$(b voice)
+  check "first use creates the personal voice file from the guide" '[ -f "$HOME/.project-brain/voice.md" ] && grep -q "^## Guide" "$HOME/.project-brain/voice.md"'
+  check "voice prints the guide, identity and examples sections" 'printf "%s" "$out" | grep -q "Natural, casual American English" && printf "%s" "$out" | grep -q "^# Who the owner is" && printf "%s" "$out" | grep -q "(none yet)"'
+  echo "- Me: Dana Kim (@dana) · contractor" >> .brain/people.md
+  check "the owner line from people.md is shown" 'b voice | grep -q "^- Me: Dana Kim"'
+  printf 'yep, on it. should have it by thurs\n' | b voice-example --to "Priya Nair" --source sources/chats/x.md >/dev/null
+  check "an example is saved in this project, with recipient and source" 'grep -q "^### .* · to Priya Nair · sources/chats/x.md" .brain/voice-examples.md && grep -qx "yep, on it. should have it by thurs" .brain/voice-examples.md'
+  check "the examples file is added to MAP.md" 'grep -q "^voice-examples.md" .brain/MAP.md && b map-check'
+  check "the same example twice is kept once" 'printf "yep, on it. should have it by thurs\n" | b voice-example --to Priya | grep -q "already have it" && [ "$(grep -c "should have it by thurs" .brain/voice-examples.md)" = 1 ]'
+  printf 'pushing the fix now\npassword: hunter2\n' | b voice-example --to Luis >/dev/null
+  check "credentials are removed from examples" '! grep -q hunter2 .brain/voice-examples.md && grep -q "REDACTED" .brain/voice-examples.md'
+  check "examples never reach the personal file" '! grep -q "pushing the fix" "$HOME/.project-brain/voice.md"'
+  i=0; while [ $i -lt 14 ]; do printf "note %s\n" $i | b voice-example --to X >/dev/null; i=$((i + 1)); done
+  check "voice shows only the 12 newest examples" '[ "$(b voice | grep -c "^### 20")" = 12 ] && b voice | grep -q "^note 13"'
+  b voice-note "starts messages lowercase" >/dev/null; b voice-note "Starts messages lowercase." >/dev/null
+  check "a repeated pattern is counted, not duplicated" '[ "$(grep -ci "starts messages lowercase" "$HOME/.project-brain/voice.md")" = 1 ] && grep -q "seen 2 times" "$HOME/.project-brain/voice.md"'
+  check "learned notes show in voice" 'b voice | grep -q "starts messages lowercase"'
+  check "an edited personal file is kept (never overwritten)" 'echo "- my own rule" >> "$HOME/.project-brain/voice.md" && b voice >/dev/null && grep -q "my own rule" "$HOME/.project-brain/voice.md"'
+  check "the start summary points to the voice skill" 'hk session-start vv111111 startup | grep -q "project-brain voice skill"'
+  check "no brain: voice says so" 'mkdir -p "$W/novoice" && ! (cd "$W/novoice" && b voice) 2>/dev/null'
+}
+
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
          hookquiet hookstart hookbudget hookdrift hookspeed hooksjson \
          detector redact capture digest images attach phantom promptspeed \
          claims move retire retier refs capturecmd catchup tidy upgrade sessionstatus skills \
-         concurrent split sizes procs winpath; do run "$t"; done
+         concurrent split sizes procs winpath voice; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo

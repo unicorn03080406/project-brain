@@ -1,6 +1,6 @@
 {
   "name": "project-brain",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "A shared, self-maintaining knowledge base per project, so parallel and future Claude Code sessions work from the same up-to-date context.",
   "author": { "name": "Unicorn Legend" },
   "repository": "https://github.com/unicorn03080406/project-brain",

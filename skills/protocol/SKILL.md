@@ -53,6 +53,8 @@ Then file it, in the same turn:
    dates, items, terms, findings…). Each fact gets a label and its source path, for example
    `Go-live 2026-10-15 [meeting] (sources/meetings/2026-09-10-status.md)`.
 6. Log it: `echo "Filed <source> → <where>. Updated: <files>." | B log --type capture --tag filed --session <id>`
+   If the material contains messages the owner wrote themselves, also save them as voice examples
+   (see the project-brain voice skill).
 7. Conflicts: the newer source wins in the brain file; keep the old value visible
    ("was 2026-10-01 in the kickoff"); add the conflict to NOW.md Open questions.
 8. Unsure where something belongs, or what it means? Ask one short question and leave the file

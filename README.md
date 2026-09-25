@@ -58,6 +58,13 @@ with its source.
 | `/project-brain:capture <file>` | Add a document from disk |
 | `/project-brain:init` (again) | Refresh from new material, or upgrade after a plugin update |
 
+**Messages you send.** When Claude drafts a message for you (a Slack reply, a client update after a
+fix), it writes it in your voice: natural, casual American chat English, matched to the person
+and the moment. It never changes *when* Claude offers a draft. Your guide is `~/.project-brain/voice.md`;
+edit it any time. Claude also learns from messages you write yourself (in pasted threads, or
+"I sent this instead"): style notes go to that personal file, your actual messages stay in each
+project's brain. Tell it once which name is yours in a thread.
+
 Your part: confirm anything marked `[inferred]` when asked, and glance at `.brain/NOW.md` now and
 then.
 

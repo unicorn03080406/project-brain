@@ -8,6 +8,17 @@ Versions follow `MAJOR.MINOR.PATCH`:
 
 Each entry names the brain format it writes.
 
+## 1.1.0 (2026-09-25), brain format 1
+
+- New: your message voice. Messages Claude drafts for you to send (Slack replies, client updates,
+  notes) follow your guide in `~/.project-brain/voice.md` (created on first use; edit it freely)
+  and match the person you're writing to. Only the wording changes, never when a draft is offered.
+  Brain projects only.
+- Claude learns your voice from messages you wrote yourself: style notes in your personal file
+  (style only, never project content), your messages verbatim in the project's
+  `.brain/voice-examples.md`, and each person's style in `people.md`.
+- `brain.sh voice`, `voice-example`, `voice-note`.
+
 ## 1.0.5 (2026-09-25), brain format 1
 
 - Filing never replaces Claude's normal reply. When you paste a transcript, chat or email with no

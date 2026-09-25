@@ -187,6 +187,7 @@ start_summary() {
   echo "what lives where. Keep it current as you work, following the project-brain protocol skill."
   echo "You are session s:$S8. Log with: echo \"<text>\" | sh \"$PB_ROOT/scripts/brain.sh\" log --type <type> --session $S8"
   [ "$SRC" = compact ] && echo "(Context was just compacted: this is a fresh summary of the brain.)"
+  echo "Writing a message for the owner to send (reply, client update, note)? Use the project-brain voice skill for its wording. It changes only how the message reads, never whether you offer one."
   cat "$T/pb-now.$$"
   s=$(open_sessions); [ -n "$s" ] && printf '\n## Other live sessions (.brain/sessions/)\n%s\n' "$s"
   today_tail

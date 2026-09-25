@@ -13,8 +13,8 @@ scripts/detect.awk              capture detector: project material or not
 scripts/redact.sh               removes credentials before anything is saved
 scripts/json.awk, attach.awk    JSON and transcript reading without jq
 scripts/upgrades/N.sh           brain format upgrade steps (none yet: format 1)
-skills/<name>/SKILL.md          init, protocol, catchup, handoff, tidy, capture
-templates/                      core files, starter files, kits.md
+skills/<name>/SKILL.md          init, protocol, voice, catchup, handoff, tidy, capture
+templates/                      core files, starter files, kits.md, voice-guide.md (default voice)
 tests/run.sh                    fast suite, no Claude needed (CI runs it on 3 systems)
 tests/e2e.sh                    real Claude Code sessions (slow, uses your account)
 tests/detector/                 detector samples: context/ must be captured, plain/ must not

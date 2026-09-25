@@ -41,6 +41,11 @@ Work:
   tidy-report                   sizes, budget, stale, empty, overlaps, inbox, claims, links, privacy
   upgrade [--dry-run]           bring the brain to the plugin's format, step by step
   session-status <state>        mark this session live, handed-off or ended
+Message voice (how drafts the owner sends should sound):
+  voice                         the owner's guide, learned notes, identity and recent real messages
+  voice-example --to NAME [--source PATH]
+                                save one message the owner wrote (text on stdin) as an example
+  voice-note "<pattern>"        add a style pattern to the owner's notes (or count it again)
 Most commands take --session <id> (or use $BRAIN_SESSION, set by the start hook).
 Other:
   slug [dir]                    Claude Code's folder name for this workspace under ~/.claude/projects
@@ -853,6 +858,72 @@ cmd_upgrade() {
   echo "upgraded to format $PB_FORMAT"; cmd_map_check
 }
 
+# --- Message voice -------------------------------------------------------------------------------
+# The owner's voice for messages Claude drafts for them to send. Style only: it never decides
+# whether a draft is offered. The guide and learned style notes are personal and shared by all the
+# owner's brain projects (~/.project-brain/voice.md, outside ~/.claude/ where Claude Code blocks
+# edits). The owner's real messages, which can hold client content, stay in each project's brain.
+
+voice_file() {
+  VOICE="${PB_HOME:-$HOME/.project-brain}/voice.md"
+  [ -f "$VOICE" ] || { mkdir -p "${VOICE%/*}" && cp "$PB_ROOT/templates/voice-guide.md" "$VOICE"; }
+}
+
+cmd_voice() {   # print what Claude needs before writing a message in the owner's voice
+  need_brain; voice_file
+  echo "# The owner's message voice ($VOICE; the owner may edit it)"
+  awk '/<!--/ { c = 1 } c { if (/-->/) c = 0; next } { print }' "$VOICE"
+  echo
+  echo "# Who the owner is in this project"
+  me=$(grep -hiE '^- *(me|owner) *[:·]' "$BRAIN/people.md" 2>/dev/null | head -n 3)
+  if [ -n "$me" ]; then printf '%s\n' "$me"
+  else echo "(not recorded: add a line '- Me: <name> (<handles>) · <role>' to people.md when you learn it)"; fi
+  echo
+  echo "# The owner's own recent messages in this project (.brain/voice-examples.md, newest last)"
+  if [ -f "$BRAIN/voice-examples.md" ]; then
+    awk '/^### / { n++ } n { b[n] = b[n] $0 "\n" } END { for (i = (n > 12 ? n - 11 : 1); i <= n; i++) printf "%s", b[i] }' "$BRAIN/voice-examples.md"
+  else
+    echo "(none yet)"
+  fi
+  echo
+  echo "# The person you are writing to: read their line in .brain/people.md (communication style)."
+}
+
+cmd_voice_example() {   # stdin: one message the owner wrote, verbatim
+  need_brain; to=""; src=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --to) to=$2; shift 2 ;; --source) src=$2; shift 2 ;; --session) opt_session=$2; shift 2 ;; *) shift ;; esac
+  done
+  w=$(mktemp -d 2>/dev/null) || { w="${TMPDIR:-/tmp}/pbv.$$"; mkdir -p "$w"; }
+  cat > "$w/in"; [ -s "$w/in" ] || { rm -rf "$w"; pb_die "no message on stdin"; }
+  pb_redact "$w/in" "$w/msg"
+  f="$BRAIN/voice-examples.md"
+  if [ ! -f "$f" ]; then
+    printf '# Voice examples\n\nMessages the owner wrote themselves, verbatim (credentials removed), so drafts can\nsound like them. Newest last. Never edit an example; add new ones with brain.sh voice-example.\n' > "$f"
+    pb_map_has "$MAP" voice-examples.md || cmd_add "voice-examples.md|demand|file|messages the owner wrote themselves, verbatim, to learn their voice|writing a message for the owner to send" >/dev/null
+  fi
+  first=$(head -n 1 "$w/msg")
+  if grep -qxF -- "$first" "$f" 2>/dev/null; then rm -rf "$w"; echo "already have it"; return 0; fi
+  pb_lock "$BRAIN" voice || pb_die "voice-examples.md is locked, try again"
+  { printf '\n### %s · to %s%s\n' "$(pb_today)" "${to:-unknown}" "${src:+ · $src}"; cat "$w/msg"; } >> "$f"
+  pb_unlock "$BRAIN" voice; rm -rf "$w"
+  echo "added to .brain/voice-examples.md"
+}
+
+cmd_voice_note() {   # voice-note "<style pattern>": add to the owner's learned notes, or count it again
+  voice_file; note=$*
+  [ -n "$note" ] || pb_die 'usage: voice-note "<style pattern, no project content>"'
+  note=$(printf '%s' "$note" | tr -d '\n' | sed 's/ · / - /g')
+  awk -v note="$note" -v today="$(pb_today)" '
+    function key(s) { s = tolower(s); gsub(/[^a-z0-9]+/, " ", s); gsub(/^ +| +$/, "", s); return s }
+    /^- [0-9-]+ · / { split($0, p, " · ")
+      if (key(p[2]) == key(note)) { c = p[3]; gsub(/[^0-9]/, "", c)
+        print "- " today " · " p[2] " · seen " (c + 1) " times"; done = 1; next } }
+    { print }
+    END { if (!done) print "- " today " · " note " · seen 1 time" }' "$VOICE" > "$VOICE.tmp" && mv -f "$VOICE.tmp" "$VOICE"
+  echo "noted in $VOICE"
+}
+
 cmd_session_status() {   # session-status <live|handed-off|ended> [--session ID]
   need_brain; st=""
   while [ $# -gt 0 ]; do case "$1" in --session) opt_session=$2; shift 2 ;; *) st=$1; shift ;; esac; done
@@ -890,6 +961,9 @@ case "$cmd" in
   tidy-report) cmd_tidy_report ;;
   upgrade) cmd_upgrade "$@" ;;
   session-status) cmd_session_status "$@" ;;
+  voice) cmd_voice ;;
+  voice-example) cmd_voice_example "$@" ;;
+  voice-note) cmd_voice_note "$@" ;;
   slug) pb_slug "$(CDPATH= cd -- "${1:-.}" && pwd)" ;;
   find) pb_find_brain ;;
   version) echo "project-brain $(pb_version), brain format $PB_FORMAT" ;;

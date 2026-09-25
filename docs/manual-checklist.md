@@ -186,3 +186,17 @@ Use `~/pb-test/research` (or `~/pb-test/northwind`).
    - [ ] The session file says `handed-off`; claims released.
 If a step fails, send the file `%USERPROFILE%\.claude\plugins\data\project-brain*\project-brain-errors.log`
 (hooks write their errors there instead of into the chat).
+
+## Message voice (1.1)
+
+In a brain project:
+- [ ] Paste a short Slack message from a client and ask "draft a reply". The draft reads like a
+      chat message (no bullet lists, no email sign-off, no em dashes), matched to that person.
+- [ ] After finishing some work, ask for "an update I can send the client". Same checks.
+- [ ] Without asking for a draft, paste a thread and just ask for a summary: Claude offers a draft
+      only when it would have anyway (the voice never adds drafts).
+- [ ] Paste a thread that contains your own messages and say which name is yours. Your messages
+      land in `.brain/voice-examples.md`; style notes (no client content) land in
+      `~/.project-brain/voice.md`; people.md gets a `Me:` line and style notes per person.
+- [ ] Edit `~/.project-brain/voice.md` (add a rule). The next chat's drafts follow it.
+- [ ] In a folder without a brain, drafts are Claude's normal ones.
