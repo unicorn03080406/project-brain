@@ -8,6 +8,11 @@ Versions follow `MAJOR.MINOR.PATCH`:
 
 Each entry names the brain format it writes.
 
+## 1.0.4 (2026-09-25), brain format 1
+
+- Protocol: attached PDFs and files are saved after the reply and announced at the next prompt;
+  Claude no longer says they were not captured.
+
 ## 1.0.3 (2026-09-25), brain format 1
 
 - Fixed on Windows: when the plugin was started with the Windows PATH order (from cmd, or by a
