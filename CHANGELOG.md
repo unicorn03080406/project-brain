@@ -8,6 +8,13 @@ Versions follow `MAJOR.MINOR.PATCH`:
 
 Each entry names the brain format it writes.
 
+## 1.0.3 (2026-09-25), brain format 1
+
+- Fixed on Windows: when the plugin was started with the Windows PATH order (from cmd, or by a
+  program that does so), `find` and `sort` were Windows' own find.exe and sort.exe. Live
+  sessions, duplicate detection, claims, structure changes and tidy then misbehaved. Under Git
+  Bash the scripts now put Git's tools first. Nothing changes on macOS and Linux.
+
 ## 1.0.2 (2026-09-23), brain format 1
 
 - Fixed: a hang when the plugin runs in a process that ignores the broken-pipe signal (GitHub

@@ -2,6 +2,12 @@
 # project-brain test suite. Plain sh, no framework. Usage: sh tests/run.sh [name-filter]
 # Runs with HOME pointed at a temp folder, so your real ~/.claude is never read or written.
 set -u
+# Git Bash on Windows: put Git's own tools first. Started from cmd (or by a program with the Windows
+# PATH order), `find` and `sort` would be Windows' find.exe and sort.exe, which are different
+# programs. /usr/bin/cygpath exists only under Git Bash/MSYS, so this costs no program start.
+if [ -x /usr/bin/cygpath ] || [ -n "${PB_FORCE_UNIX_PATH:-}" ]; then
+  case "$PATH" in /usr/bin:*) ;; *) PATH="/usr/bin:/bin:$PATH"; export PATH ;; esac
+fi
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 B="$ROOT/scripts/brain.sh"
 FILTER=${1:-}
@@ -733,11 +739,33 @@ t_procs() {
   check "saving pasted material: at most 15 programs" '[ $((n4 - 1)) -le 15 ]'
 }
 
+# Windows' own find.exe and sort.exe come first in PATH when started from cmd. Fake them here,
+# force the Git Bash path fix, and check that the tools that need find/sort still work.
+t_winpath() {
+  fake="$W/winbin"; mkdir -p "$fake"
+  for c in find sort; do printf '#!/bin/sh\necho "%s: Parameter format not correct" >&2\nexit 2\n' "$c" > "$fake/$c"; chmod +x "$fake/$c"; done
+  wb() { PATH="$fake:$PATH" PB_FORCE_UNIX_PATH=1 sh "$B" "$@"; }
+  whk() { printf '{"session_id":"%s","cwd":"%s","source":"%s"}' "$1" "$(pwd)" "$2" | PATH="$fake:$PATH" PB_FORCE_UNIX_PATH=1 sh "$H" session-start; }
+  check "the fake find really breaks things without the fix" '! PATH="$fake:$PATH" find . -name x'
+  wb scaffold . --name Win --mode private >/dev/null
+  wb add "decisions.md|demand|file|decisions|x" >/dev/null; wb claude-block >/dev/null
+  echo x > .brain/stray.md
+  check "map-check still finds unmapped files" 'wb map-check | grep -q "not in MAP.md: stray.md"'
+  rm .brain/stray.md
+  wb claim "split decisions.md" --session aaaa1111 >/dev/null
+  check "overlapping claims are still refused" '! wb claim "merge decisions.md" --session bbbb2222 >/dev/null'
+  whk aaaa1111 startup >/dev/null
+  check "the start summary still lists other live sessions" 'echo hi > q.txt; hp aaaa1111 q.txt >/dev/null; whk cccc3333 startup | grep -q "s:aaaa1111"'
+  printf 'pdf' > m.pdf; wb capture m.pdf --session aaaa1111 >/dev/null
+  check "duplicate files are still detected" 'wb capture m.pdf --session aaaa1111 | grep -q "already in the brain"'
+  check "detect still counts nested repos" 'mkdir -p ws/r1 && git init -q ws/r1 && wb detect ws | grep -q "nested-repos: 1"'
+}
+
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
          hookquiet hookstart hookbudget hookdrift hookspeed hooksjson \
          detector redact capture digest images attach phantom promptspeed \
          claims move retire retier refs capturecmd catchup tidy upgrade sessionstatus skills \
-         concurrent split sizes procs; do run "$t"; done
+         concurrent split sizes procs winpath; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo

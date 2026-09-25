@@ -7,6 +7,12 @@
 # Every scenario runs in a fresh temp folder; your own projects and settings are not touched
 # (init runs with --yes, which never edits ~/.claude/settings.json).
 set -u
+# Git Bash on Windows: put Git's own tools first. Started from cmd (or by a program with the Windows
+# PATH order), `find` and `sort` would be Windows' find.exe and sort.exe, which are different
+# programs. /usr/bin/cygpath exists only under Git Bash/MSYS, so this costs no program start.
+if [ -x /usr/bin/cygpath ] || [ -n "${PB_FORCE_UNIX_PATH:-}" ]; then
+  case "$PATH" in /usr/bin:*) ;; *) PATH="/usr/bin:/bin:$PATH"; export PATH ;; esac
+fi
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 B="$ROOT/scripts/brain.sh"
 FILTER=${1:-}

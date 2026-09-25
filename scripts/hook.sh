@@ -8,6 +8,13 @@
 # macOS/Linux but 15-30 ms in Git Bash on Windows, so the common paths use shell built-ins and
 # at most one or two awk runs. Keep it that way.
 
+# Git Bash on Windows: put Git's own tools first. Started from cmd (or by a program with the Windows
+# PATH order), `find` and `sort` would be Windows' find.exe and sort.exe, which are different
+# programs. /usr/bin/cygpath exists only under Git Bash/MSYS, so this costs no program start.
+if [ -x /usr/bin/cygpath ] || [ -n "${PB_FORCE_UNIX_PATH:-}" ]; then
+  case "$PATH" in /usr/bin:*) ;; *) PATH="/usr/bin:/bin:$PATH"; export PATH ;; esac
+fi
+
 # Fast exit, no programs started: is there a .brain/ at or above the project folder?
 d=${CLAUDE_PROJECT_DIR:-}
 if [ -n "$d" ]; then

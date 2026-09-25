@@ -2,6 +2,13 @@
 # Source it; do not run it. Functions are prefixed pb_. Nothing here writes outside the brain
 # except where a caller explicitly asks (CLAUDE.md block, .git/info/exclude).
 
+# Git Bash on Windows: put Git's own tools first. Started from cmd (or by a program with the Windows
+# PATH order), `find` and `sort` would be Windows' find.exe and sort.exe, which are different
+# programs. /usr/bin/cygpath exists only under Git Bash/MSYS, so this costs no program start.
+if [ -x /usr/bin/cygpath ] || [ -n "${PB_FORCE_UNIX_PATH:-}" ]; then
+  case "$PATH" in /usr/bin:*) ;; *) PATH="/usr/bin:/bin:$PATH"; export PATH ;; esac
+fi
+
 PB_ROOT=${PB_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
 PB_FORMAT=${PB_FORMAT_OVERRIDE:-1}   # brain format this plugin writes (override only in tests)
 PB_AUTO_BUDGET=3000   # tokens, estimated as bytes/4
