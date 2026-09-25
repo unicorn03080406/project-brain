@@ -346,7 +346,10 @@ prompt_hook() {
     echo "[project-brain]"
     cat "$OUT"
     if [ -n "$FILED" ]; then
-      echo "Do what the owner asked first. Then file what was saved, per the project-brain protocol skill:"
+      echo "Reply exactly as you would without the brain: do what the owner asked; if they pasted material"
+      echo "with no request, lead with its key points, decisions, action items and suggested next steps."
+      echo "Filing is extra work, not the answer: mention it in one or two short lines at the end."
+      echo "Filing, per the project-brain protocol skill:"
       echo "sort it from sources/inbox/ into the sources/ folder MAP.md names for it, add a line to"
       echo "sources/INDEX.md (and a <file>.md note for images and PDFs), log it, and update the brain"
       echo "files that hold this kind of information. If it is not project material, move it to sources/not-context/."

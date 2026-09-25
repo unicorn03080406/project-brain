@@ -8,6 +8,12 @@ Versions follow `MAJOR.MINOR.PATCH`:
 
 Each entry names the brain format it writes.
 
+## 1.0.5 (2026-09-25), brain format 1
+
+- Filing never replaces Claude's normal reply. When you paste a transcript, chat or email with no
+  request, Claude answers as it would without the plugin (key points, decisions, action items,
+  next steps) and mentions the filing in a line or two at the end.
+
 ## 1.0.4 (2026-09-25), brain format 1
 
 - Protocol: attached PDFs and files are saved after the reply and announced at the next prompt;

@@ -29,8 +29,16 @@ it. Search tools skip hidden folders: always give `.brain/...` paths explicitly.
 
 ## 2. Filing what was captured
 
-A `[project-brain]` notice says what the hooks saved to `sources/inbox/`. Do what the owner
-asked first, then file, in the same turn:
+A `[project-brain]` notice says what the hooks saved to `sources/inbox/`. Filing comes on top
+of your normal work, never instead of it:
+- The owner asked for something (a summary, next steps, a feature from a Slack thread): do that
+  first, exactly as you would without a brain.
+- The owner pasted material without saying what to do: respond as you would without a brain.
+  For a transcript, notes, a chat or an email, lead with the key points, the decisions, the
+  action items and your suggested next steps, or do the task it obviously calls for.
+- Filing is extra work, not the answer. Mention it in one or two short lines at the end of your
+  reply (where it went, what brain files changed), never as the body of the reply.
+Then file it, in the same turn:
 
 1. Read the saved file. Decide: project material, or not (code help, personal, another project)?
    Not project material → move it to `sources/not-context/`, log one line, done.
