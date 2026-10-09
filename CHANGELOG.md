@@ -8,6 +8,14 @@ Versions follow `MAJOR.MINOR.PATCH`:
 
 Each entry names the brain format it writes.
 
+## 1.2.0 (2026-10-08), brain format 1
+
+- Attached PDFs and files are now saved and filed in the same turn, like pasted text. Claude Code
+  writes an attachment to the session record only when Claude starts replying; a background
+  watcher saves it within about a second of that, and Claude is told at its next tool use (new
+  PostToolUse hook). The end-of-reply check stays as a backup.
+- The tool-use hook starts no programs when there is nothing to report.
+
 ## 1.1.0 (2026-09-25), brain format 1
 
 - New: your message voice. Messages Claude drafts for you to send (Slack replies, client updates,

@@ -60,11 +60,12 @@ Then file it, in the same turn:
 8. Unsure where something belongs, or what it means? Ask one short question and leave the file
    in the inbox until you know.
 
-Attached PDFs and files arrive later than pasted text and images: Claude Code only records them
-after your reply, so the hooks save them then and announce them at the owner's next prompt
-("Attachments from your previous message: …"). If the owner attached a file and no notice has
-come yet, do not say it was not captured; say it will be saved after this reply and filed next
-turn (or read it from the conversation now if the task needs it).
+Attached PDFs and files arrive a moment later than pasted text and images: Claude Code writes
+them to the session record only once you start replying. The hooks save them within about a
+second of that and tell you at your next tool use ("Saved attachment(s) from the owner's current
+message: …"); file them in this turn. If you use no tool, the notice comes with the owner's next
+prompt. Never say an attachment was not captured; you can always read it from the conversation
+itself if the task needs it right away.
 
 Material too short for the hook (a one-liner like "Kofi approved the budget"): save it yourself
 with `echo "<the words, as said>" | B capture --kind note --session <id>`, then file it as above.

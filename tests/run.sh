@@ -788,11 +788,55 @@ t_voice() {
   check "no brain: voice says so" 'mkdir -p "$W/novoice" && ! (cd "$W/novoice" && b voice) 2>/dev/null'
 }
 
+# Attachments in the same turn: the prompt hook's watcher saves them as soon as Claude Code writes
+# the message's record (a moment after the hook), and the tool hook tells Claude mid-turn.
+t_watch() {
+  b scaffold . --name Watch --mode private >/dev/null
+  tp="$W/watch.jsonl"; echo '{"type":"summary"}' > "$tp"
+  printf '{"session_id":"wat11111","cwd":"%s","transcript_path":"%s","source":"startup"}' "$(pwd)" "$tp" | sh "$H" session-start >/dev/null
+  printf '%%PDF-1.4 watched bytes \001\002 end' > memo.pdf
+  b64=$(base64 < memo.pdf | tr -d '\n')
+  echo "what date is in this memo?" > q.txt
+  hp wat11111 q.txt "" "$tp" >/dev/null                  # prompt_id p-1; the watcher starts
+  printf '{"type":"user","promptId":"p-1","message":{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"%s"},"title":"watched memo.pdf"},{"type":"text","text":"what date is in this memo?"}]},"origin":{"kind":"human"}}\n' "$b64" >> "$tp"
+  i=0; while [ $i -lt 40 ] && [ ! -s .brain/sessions/wat11111.pending ]; do sleep 0.1; i=$((i + 1)); done
+  check "the attachment is saved before the reply ends (no Stop hook yet)" 'cmp -s memo.pdf .brain/sources/inbox/*-wat11111-watched-memo.pdf'
+  th() { printf '{"session_id":"wat11111","cwd":"%s","hook_event_name":"PostToolUse"}' "$(pwd)" | CLAUDE_PROJECT_DIR=$(pwd) CLAUDE_CODE_SESSION_ID=wat11111-full-id sh "$H" tool; }
+  out=$(th)
+  check "the next tool use tells Claude, in the same turn" 'printf "%s" "$out" | grep -q "\"hookEventName\":\"PostToolUse\"" && printf "%s" "$out" | grep -q "Saved attachment(s) from the owner.s current message: saved: .brain/sources/inbox/"'
+  check "the notice comes with the filing instructions" 'printf "%s" "$out" | grep -q "Reply exactly as you would without the brain"'
+  check "later tool uses are silent" '[ -z "$(th)" ]'
+  check "the next prompt does not repeat it" 'echo ok > q2.txt; ! hp wat11111 q2.txt | grep -q "Attachments from your previous message"'
+  hs wat11111 "$tp"; sleep 0.5
+  check "the Stop hook afterwards saves nothing twice" '[ "$(ls .brain/sources/inbox | grep -c watched-memo.pdf)" = 1 ]'
+  check "the save is logged once" '[ "$(grep -c "watched-memo.pdf" .brain/log/$(date +%Y-%m-%d).md)" = 1 ]'
+  echo "no record ever" > q3.txt
+  check "a watcher with no record gives up quietly" '(PB_WATCH_SECONDS=1 hp wat11111 q3.txt "" "$tp" >/dev/null; sleep 1.5; [ -z "$(ls .brain/sources/inbox | grep -v watched-memo)" ])'
+  tp2="$W/late.jsonl"
+  printf '{"session_id":"lat22222","cwd":"%s","transcript_path":"%s","source":"startup"}' "$(pwd)" "$tp2" | sh "$H" session-start >/dev/null
+  printf 'late memo bytes \003' > late.pdf; b64l=$(base64 < late.pdf | tr -d '\n')
+  echo "and this one?" > q4.txt
+  hp lat22222 q4.txt "" "$tp2" >/dev/null                   # the record file does not exist yet
+  sleep 3                                                 # Claude is still thinking
+  printf '{"type":"user","promptId":"p-1","message":{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"%s"},"title":"late memo.pdf"}]},"origin":{"kind":"human"}}\n' "$b64l" > "$tp2"
+  i=0; while [ $i -lt 40 ] && ! ls .brain/sources/inbox | grep -q late-memo; do sleep 0.1; i=$((i + 1)); done
+  check "a record that appears only when the reply starts is still caught" 'cmp -s late.pdf .brain/sources/inbox/*-lat22222-late-memo.pdf'
+  t0=$(ms); printf '{"session_id":"wat11111","cwd":"%s","transcript_path":"%s","prompt_id":"p-9","prompt":"hi"}' "$(pwd)" "$W/never.jsonl" | PB_WATCH_SECONDS=3 sh "$H" prompt 2>&1 | cat >/dev/null; t1=$(ms)
+  check "the prompt hook never holds Claude Code's output or error pipe while the watcher runs" '[ $((t1 - t0)) -lt 1500 ]'
+  check "no lock left behind" '[ -z "$(ls .brain/.locks 2>/dev/null)" ]'
+  bin="$W/countbin"
+  if [ -d "$bin" ]; then
+    : > "$W/count"
+    printf '{}' | PATH="$bin:$PATH" CLAUDE_PROJECT_DIR=$(pwd) CLAUDE_CODE_SESSION_ID=wat11111-full-id sh "$H" tool >/dev/null
+    check "tool hook with nothing pending starts no programs" '[ ! -s "$W/count" ]'
+  fi
+}
+
 for t in json scaffold add mapcheck claudeblock githide log detect adopt skill \
          hookquiet hookstart hookbudget hookdrift hookspeed hooksjson \
          detector redact capture digest images attach phantom promptspeed \
          claims move retire retier refs capturecmd catchup tidy upgrade sessionstatus skills \
-         concurrent split sizes procs winpath voice; do run "$t"; done
+         concurrent split sizes procs winpath voice watch; do run "$t"; done
 
 PASS=$(grep -c '^ok$' "$W/.results" 2>/dev/null || true); FAIL=$(grep -c '^FAIL' "$W/.results" 2>/dev/null || true)
 echo

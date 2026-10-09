@@ -46,7 +46,8 @@ dated notes and commits. NOW.md is marked *inferred* until you confirm it.
 ## Day to day
 
 Mostly nothing to do. Every chat starts with a short summary of the project. Paste or attach
-project material anywhere and it is filed. Mention a decision in passing ("Anna approved the
+project material anywhere (text, screenshots, PDFs, files) and it is saved and filed in that same
+reply. Mention a decision in passing ("Anna approved the
 budget") and it is recorded. Ask "what did we agree on X?" and the answer comes from the brain,
 with its source.
 

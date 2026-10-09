@@ -64,6 +64,12 @@ When the detector gets something wrong in real use, add the (made-up equivalent)
 - Hook input: use the `cwd` from the JSON, never `$PWD`. The hook's working folder follows the
   chat's shell, which may have moved into `.brain/`.
 - Attachments: a pasted image is in the session's `images/` folder before the prompt hook runs.
-  An attached PDF or file only appears in the transcript after it, so the Stop hook saves those.
+  An attached PDF or file reaches the transcript only when Claude starts replying (in a new
+  session the transcript file does not exist before that). The prompt hook starts a watcher for
+  it; the PostToolUse hook tells Claude; the Stop hook is the backup.
+- Never start a background job with a forked subshell inside a function whose output is
+  redirected: the shell keeps a hidden copy of Claude Code's stderr, the child inherits it, and
+  Claude Code waits for the child before replying. Start a new `sh` after main() instead (see the
+  end of hook.sh). `tests/run.sh` checks the pipes close at once.
 - Re-run `tests/probe/probe.sh` (see its header) after a Claude Code upgrade, to check the hook
   inputs haven't changed.

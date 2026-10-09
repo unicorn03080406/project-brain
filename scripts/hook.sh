@@ -59,6 +59,7 @@ find_brain_or_exit() {
   SES="$BRAIN/sessions/$S8"
 }
 
+dbg() { [ -n "${PB_DEBUG:-}" ] && echo "$$ $*" >> "$PB_DEBUG"; return 0; }   # PB_DEBUG=<file> to trace
 now() {   # one date call per run, only when needed: sets NOW (local, with offset) and EPOCH
   [ -n "${NOW:-}" ] && return 0
   set -- $(date '+%Y-%m-%dT%H:%M:%S%z %s'); NOW=$1; EPOCH=$2
@@ -330,11 +331,21 @@ pending() {
   FILED=1
 }
 
-json_out() {   # stdin text -> UserPromptSubmit JSON with additionalContext
-  LC_ALL=C awk 'BEGIN { printf "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"" }
+json_out() {   # json_out [event]: stdin text -> hook JSON with additionalContext
+  LC_ALL=C awk -v ev="${1:-UserPromptSubmit}" 'BEGIN { printf "{\"hookSpecificOutput\":{\"hookEventName\":\"%s\",\"additionalContext\":\"", ev }
     { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, ""); gsub(/[\001-\010\013\014\016-\037]/, "")
       printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }
     END { printf "\"}}\n" }'
+}
+
+filing_note() {
+  echo "Reply exactly as you would without the brain: do what the owner asked; if they pasted material"
+  echo "with no request, lead with its key points, decisions, action items and suggested next steps."
+  echo "Filing is extra work, not the answer: mention it in one or two short lines at the end."
+  echo "Filing, per the project-brain protocol skill:"
+  echo "sort it from sources/inbox/ into the sources/ folder MAP.md names for it, add a line to"
+  echo "sources/INDEX.md (and a <file>.md note for images and PDFs), log it, and update the brain"
+  echo "files that hold this kind of information. If it is not project material, move it to sources/not-context/."
 }
 
 prompt_hook() {
@@ -342,20 +353,57 @@ prompt_hook() {
   echo >> "$SES.prompts"                          # count prompts (no program started)
   FILED=""
   digest; capture; images; pending
-  [ -s "$OUT" ] || return 0
+  if [ -s "$OUT" ]; then
+    { echo "[project-brain]"; cat "$OUT"; [ -n "$FILED" ] && filing_note; } | json_out
+  fi
+  start_watcher
+}
+
+# Attached PDFs and files are not in the prompt. Claude Code writes the message, attachments
+# included, to the session record only when Claude starts replying (in a new session the record
+# file does not even exist before that). A background watcher waits for this prompt's record and
+# saves its attachments as soon as it appears, while Claude is still replying; the tool hook then
+# tells Claude in the same turn. The Stop hook stays as the backup.
+# The watcher is started after main() has returned (see the end of this file), as a new sh
+# process: a forked subshell would inherit the copy of Claude Code's stderr that the shell keeps
+# while main's output is redirected, and Claude Code would wait for the watcher before replying.
+start_watcher() {
+  dbg "start_watcher: transcript=$TRANSCRIPT prompt_id=$PROMPT_ID"
+  [ -n "$TRANSCRIPT" ] && [ -n "$PROMPT_ID" ] || return 0
+  WATCH_T=$(pb_path "$TRANSCRIPT")
+}
+
+# Waits as long as a turn can last (PB_WATCH_SECONDS, default 600). Between checks it only uses
+# shell built-ins ([ -f ], [ -nt ]); it searches the record only when the file has changed.
+# Polls every 0.25 s for the first 10 s, then every 2 s.
+watch_record() {
+  stamp="$SES.watch"; rm -f "$stamp"
+  waited=0; max=$(( ${PB_WATCH_SECONDS:-600} * 4 ))   # in quarter seconds
+  while [ "$waited" -lt "$max" ]; do
+    if [ -f "$1" ] && { [ ! -e "$stamp" ] || [ "$1" -nt "$stamp" ]; }; then
+      : > "$stamp"
+      if grep -q "\"promptId\":\"$PROMPT_ID\"" "$1" 2>/dev/null; then
+        dbg "record found after $waited quarter seconds"
+        rm -f "$stamp"; stop_work "$1"; return 0
+      fi
+    fi
+    if [ "$waited" -lt 40 ]; then sleep 0.25 2>/dev/null || sleep 1; waited=$((waited + 1))
+    else sleep 2; waited=$((waited + 8)); fi
+  done
+  rm -f "$stamp"
+}
+
+# PostToolUse: if attachments were saved since the last notice, tell Claude now (same turn).
+# Usually there is nothing to say and this starts no program (see the fast path in main).
+tool_hook() {
+  [ -s "$SES.pending" ] || return 0
   {
     echo "[project-brain]"
-    cat "$OUT"
-    if [ -n "$FILED" ]; then
-      echo "Reply exactly as you would without the brain: do what the owner asked; if they pasted material"
-      echo "with no request, lead with its key points, decisions, action items and suggested next steps."
-      echo "Filing is extra work, not the answer: mention it in one or two short lines at the end."
-      echo "Filing, per the project-brain protocol skill:"
-      echo "sort it from sources/inbox/ into the sources/ folder MAP.md names for it, add a line to"
-      echo "sources/INDEX.md (and a <file>.md note for images and PDFs), log it, and update the brain"
-      echo "files that hold this kind of information. If it is not project material, move it to sources/not-context/."
-    fi
-  } | json_out
+    printf 'Saved attachment(s) from the owner'"'"'s current message: '
+    awk '{ printf "%s%s", s, $0; s = "; " } END { print "." }' "$SES.pending"
+    filing_note
+  } | json_out PostToolUse
+  rm -f "$SES.pending"
 }
 
 # --- After each reply: attachments that only appear in the transcript (PDFs, files) --------------
@@ -377,7 +425,14 @@ ext_for() {
 
 b64dec() { base64 -d 2>/dev/null || base64 -D 2>/dev/null || openssl base64 -d -A; }
 
+# One scan at a time per session: the watcher and the Stop hook may both try.
 stop_work() {
+  pb_lock "$BRAIN" "att-$S8" || return 0
+  scan_attachments "$1"
+  pb_unlock "$BRAIN" "att-$S8"
+}
+
+scan_attachments() {
   t=$1
   [ -f "$SES.att" ] || : > "$SES.att"
   from=$(sed -n 's/^tlines //p' "$SES.att" | tail -n 1); from=${from:-0}
@@ -410,6 +465,18 @@ stop_work() {
 
 # ---------------------------------------------------------------------------------------------
 main() {
+  if [ "$EVENT" = watch ]; then          # sh hook.sh watch <record> <prompt id> <brain> <session8>
+    PROMPT_ID=$3; BRAIN=$4; S8=$5; SES="$BRAIN/sessions/$S8"; MAP="$BRAIN/MAP.md"; PROJ=${BRAIN%/.brain}
+    watch_record "$2"; return 0
+  fi
+  # Tool use happens many times per turn: with nothing pending, start no program at all.
+  if [ "$EVENT" = tool ] && [ -n "${PB_FAST:-}" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+    SID=$CLAUDE_CODE_SESSION_ID
+    if [ ${#SID} -gt 8 ]; then S8=${SID%"${SID#????????}"}; else S8=$SID; fi
+    BRAIN=$PB_FAST; SES="$BRAIN/sessions/$S8"
+    [ -s "$SES.pending" ] || return 0
+    tool_hook; return 0
+  fi
   read_input
   find_brain_or_exit
   case "$EVENT" in
@@ -417,6 +484,7 @@ main() {
     session-end) end_session ;;
     prompt) prompt_hook ;;
     stop) stop_hook ;;
+    tool) tool_hook ;;
     *) ;;
   esac
 }
@@ -424,5 +492,8 @@ main() {
 # Errors go to a log file, never into the session.
 ERRF="${CLAUDE_PLUGIN_DATA:-$T}/project-brain-errors.log"
 [ -d "${ERRF%/*}" ] || mkdir -p "${ERRF%/*}" 2>/dev/null
-main 2>>"$ERRF"
+main "$@" 2>>"$ERRF"
+if [ -n "${WATCH_T:-}" ]; then
+  sh "$PB_ROOT/scripts/hook.sh" watch "$WATCH_T" "$PROMPT_ID" "$BRAIN" "$S8" </dev/null >/dev/null 2>>"$ERRF" &
+fi
 exit 0
